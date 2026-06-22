@@ -38,13 +38,13 @@ npm start
 The server starts on **port 3000** by default. You'll see:
 
 ```
-╔═══════════════════════════════════════════════════════════════╗
-║         OBS Text Overlay Server                               ║
-╠═══════════════════════════════════════════════════════════════╣
-║  Control:   http://localhost:3000/control.html                ║
-║  Overlay:   http://localhost:3000/overlay.html   (OBS)        ║
-║  Screen:    http://localhost:3000/screen.html    (display)    ║
-╚═══════════════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════╗
+║         OBS Text Overlay Server                           ║
+╠═══════════════════════════════════════════════════════════╣
+║  Control:   http://localhost:3000/control.html            ║
+║  Overlay:   http://localhost:3000/overlay.html   (OBS)    ║
+║  Screen:    http://localhost:3000/screen.html    (display) ║
+╚═══════════════════════════════════════════════════════════╝
 ```
 
 ## Usage
@@ -74,6 +74,7 @@ Both pages update instantly when text is sent from the control page. They also s
 |----------|---------|-------------|
 | `PORT` | `3000` | Port the server listens on |
 | `HOST` | `0.0.0.0` | Network interface to bind to |
+| `ALLOWED_ORIGINS` | *(all)* | Comma-separated allowed WebSocket origins |
 
 Examples:
 
@@ -86,6 +87,9 @@ HOST=127.0.0.1 npm start
 
 # Expose on all network interfaces (default — accessible from phones, tablets, other PCs)
 HOST=0.0.0.0 npm start
+
+# Restrict WebSocket connections to specific origins (recommended if exposed beyond LAN)
+ALLOWED_ORIGINS="http://localhost:3000,http://192.168.1.50:3000" npm start
 ```
 
 When bound to `0.0.0.0`, other devices on your network can reach the server at `http://<your-ip>:3000/`. Find your local IP with:
@@ -100,6 +104,14 @@ hostname -I | awk '{print $1}'
 # Windows
 ipconfig | findstr /i "IPv4"
 ```
+
+## Security
+
+- **WebSocket origin check** — restrict which origins can connect via the `ALLOWED_ORIGINS` env variable.
+- **Message size limit** — messages larger than 64 KiB are rejected.
+- **Rate limiting** — each IP is limited to 5 messages per second.
+- **Security headers** — `X-Content-Type-Options`, `X-Frame-Options`, and `Content-Security-Policy` are set on all HTTP responses.
+- **XSS prevention** — all client pages use `textContent` (never `innerHTML`) to render user text.
 
 ## Files
 
