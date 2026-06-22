@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OBS Text Overlay — Control</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="control-page">
+
+  <!--
+  ===========================================================================
+  CONTROL PAGE
+  ===========================================================================
+  Open this page in your regular browser.  Type text and press Enter to send
+  it to the WebSocket server.  The server then broadcasts it to every
+  connected overlay page (which you've added as a Browser Source in OBS).
+
+  The connection-status badge in the top-right corner tells you whether the
+  WebSocket is alive.
+  -->
+
+  <div class="control-container">
+    <h1>OBS Text Overlay</h1>
+    <p class="subtitle">Type your text below and press <kbd>Enter</kbd> to send it to the overlay.</p>
+
+    <!-- Connection status badge -->
+    <div id="status" class="status disconnected">Disconnected</div>
+
+    <!-- Text input -->
+    <input
+      type="text"
+      id="textInput"
+      class="text-input"
+      placeholder="Type your overlay text here…"
+      autofocus
+    />
+
+    <!-- Action buttons -->
+    <div class="button-row">
+      <button id="sendBtn" class="btn btn-primary">Send</button>
+      <button id="clearBtn" class="btn btn-secondary">Clear Overlay</button>
+    </div>
+
+    <p class="hint">
+      <strong>OBS Overlay URL:</strong>
+      <code id="overlayUrl">http://localhost:3000/overlay.html</code>
+      <br />
+      Add this as a <em>Browser Source</em> in OBS Studio (size: 1920×1080).
+    </p>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- WebSocket client script                                                   -->
+  <!-- ========================================================================= -->
+  <script>
+    (function () {
+      // ---- Configuration ----------------------------------------------------
+      // Change this to your server's LAN IP if you're running the overlay on
+      // a different machine on the same network (see README).
+      const SERVER_URL = `ws://${location.host}`;
+
+      // DOM elements
+      const statusEl = document.getElementById("status");
+      const inputEl = document.getElementById("textInput");
+      const sendBtn = document.getElementById("sendBtn");
+      const clearBtn = document.getElementById("clearBtn");
+      const overlayUrlEl = document.getElementById("overlayUrl");
+
+      // Update the overlay URL shown on the page to match the current host
+      overlayUrlEl.textContent = `http://${location.host}/overlay.html`;
+
+      // ---- WebSocket connection ---------------------------------------------
+      let socket = null;
+      let reconnectTimer = null;
+      let reconnectDelay = 1000; // Start at 1 s, increase on each retry
+
+      function setStatus(state) {
+        // Remove all possible status classes, then add the correct one
+        statusEl.classList.remove("connected", "disconnected", "reconnecting");
+        statusEl.classList.add(state);
+        if (state === "connected") {
+          statusEl.textContent = "Connected";
+        } else if (state === "disconnected") {
+          statusEl.textContent = "Disconnected";
+        } else if (state === "reconnecting") {
+          statusEl.textContent = "Reconnecting…";
+        }
+      }
+
+      function connect() {
+        // Clean up any stale socket
+        if (socket) {
+          socket.onclose = null; // Suppress reconnect from manual close
+          socket.close();
+          socket = null;
+        }
+
+        setStatus("reconnecting");
+        socket = new WebSocket(SERVER_URL);
+
+        socket.addEventListener("open", () => {
+          console.log("[ws] Connected to server");
+          setStatus("connected");
+          reconnectDelay = 1000; // Reset backoff on successful connection
+        });
+
+        socket.addEventListener("close", () => {
+          console.log("[ws] Disconnected — will retry in", reconnectDelay, "ms");
+          setStatus("disconnected");
+          scheduleReconnect();
+        });
+
+        socket.addEventListener("error", (err) => {
+          // The 'close' event fires after 'error', so we don't need to
+          // do anything here except log it.
+          console.error("[ws] Error:", err);
+        });
+      }
+
+      function scheduleReconnect() {
+        if (reconnectTimer) return; // Already scheduled
+        setStatus("reconnecting");
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          reconnectDelay = Math.min(reconnectDelay * 2, 30000); // Cap at 30 s
+          connect();
+        }, reconnectDelay);
+      }
+
+      // ---- Sending messages ------------------------------------------------
+      function sendMessage(text) {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(text);
+          console.log("[ws] Sent:", text);
+        } else {
+          console.warn("[ws] Cannot send — not connected");
+          // Flash the status to remind the user
+          statusEl.classList.add("flash");
+          setTimeout(() => statusEl.classList.remove("flash"), 500);
+        }
+      }
+
+      // ---- Event listeners -------------------------------------------------
+      inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const text = inputEl.value;
+          sendMessage(text);
+          // Keep the text in the input so the user can edit and re-send
+          // (the text stays in the field).
+        }
+      });
+
+      sendBtn.addEventListener("click", () => {
+        sendMessage(inputEl.value);
+      });
+
+      clearBtn.addEventListener("click", () => {
+        inputEl.value = "";
+        sendMessage(""); // Empty string = clear the overlay
+      });
+
+      // ---- Initialize ------------------------------------------------------
+      connect();
+    })();
+  </script>
+</body>
+</html>

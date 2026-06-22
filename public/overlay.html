@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+  <title>OBS Text Overlay</title>
+
+  <!--
+  ===========================================================================
+  OBS OVERLAY PAGE
+  ===========================================================================
+  Add this page to OBS Studio as a "Browser" source.
+
+  How to add in OBS:
+    1. In OBS, click the "+" button in the "Sources" panel.
+    2. Choose "Browser".
+    3. Name it (e.g. "Text Overlay") and click OK.
+    4. Set URL to:  http://localhost:3001/overlay.html
+    5. Set Width to 1920 and Height to 1080.
+    6. Check "Refresh browser when scene becomes active" (optional).
+    7. Click OK.
+
+  The page connects to the WebSocket server and displays text inside a
+  styled bar that slides in from the left.  The background is transparent
+  so only the bar is visible on your stream.
+  -->
+
+  <!-- Lato font (matches the reference design) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&family=PT+Sans+Narrow:wght@700&display=swap"
+    rel="stylesheet"
+  />
+
+  <style>
+    /* ---- Reset & base ---------------------------------------------------- */
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      margin: 0;
+      /* Transparent background — critical for OBS overlay */
+      background-color: rgba(0, 0, 0, 0) !important;
+      font-family: Lato, sans-serif;
+      line-height: 1.5;
+    }
+
+    /* ---- Overlay bar wrapper (handles the collapse/slide animation) --------
+       |
+       |  Overflow is hidden.  The bar slides in from the left by
+       |  transitioning max-width from 0 → 900px.
+       |  ----------------------------------------------------------------- */
+    .overlay-bar-wrapper {
+      position: fixed;
+      top: 0;
+      left: 0;
+      overflow: hidden;
+      max-width: 0;
+      -webkit-transition: max-width 300ms cubic-bezier(0.4, 0, 0.2, 1);
+      transition: max-width 300ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* When visible, expand to fit the text */
+    .overlay-bar-wrapper.visible {
+      max-width: 900px;
+    }
+
+    /* ---- The bar itself ----------------------------------------------------
+       |
+       |  Customizable properties:
+       |    background  — bar color + opacity.  Default: dark navy at 90%.
+       |    clip-path   — the angled cut on the right edge.  Adjust the 24px
+       |                   value to make the angle steeper or shallower.
+       |    height      — bar height in pixels.
+       |    padding     — space around the text inside the bar.
+       |  ----------------------------------------------------------------- */
+    .overlay-bar {
+      display: -webkit-box;
+      display: -webkit-flex;
+      display: -ms-flexbox;
+      display: flex;
+      -webkit-align-items: center;
+      align-items: center;
+      width: -webkit-max-content;
+      width: max-content;
+      height: 100px;
+      color: #fff;
+      background: rgba(43, 64, 78, 0.9);
+      padding: 0 64px 0 40px;
+      white-space: nowrap;
+      -webkit-clip-path: polygon(100% 0, calc(100% - 24px) 50%, 100% 100%, 0% 100%, 0% 0%);
+      clip-path: polygon(100% 0, calc(100% - 24px) 50%, 100% 100%, 0% 100%, 0% 0%);
+    }
+
+    /* ---- The text ----------------------------------------------------------
+       |
+       |  Customizable properties:
+       |    font-size   — text size.  44px is the default; increase for
+       |                   bigger text or decrease for smaller.
+       |    font-weight — 400 (regular), 700 (bold), or 300 (light).
+       |    font-family — Lato is the default; swap for any web-safe font.
+       |    color       — text color (white = #fff).
+       |  ----------------------------------------------------------------- */
+    .overlay-text {
+      margin: 0;
+      font-size: 44px;
+      font-weight: 400;
+      font-family: Lato, sans-serif;
+      line-height: 100px;   /* vertically centers single-line text in the bar */
+      color: #fff;
+    }
+
+    /* ---- Debug indicator (small dot in corner — off-screen in OBS) ------- */
+    .debug-status {
+      position: fixed;
+      bottom: 4px;
+      right: 8px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.35);
+      font-family: monospace;
+      pointer-events: none;
+      z-index: 999;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Overlay bar — slides in from the left when text is received -->
+  <div id="overlayBarWrapper" class="overlay-bar-wrapper">
+    <div class="overlay-bar">
+      <h3 id="overlayText" class="overlay-text"></h3>
+    </div>
+  </div>
+
+  <!-- Debug status (only visible when opened in a regular browser) -->
+  <div id="debugStatus" class="debug-status"></div>
+
+  <!-- ========================================================================= -->
+  <!-- WebSocket client script                                                   -->
+  <!-- ========================================================================= -->
+  <script>
+    (function () {
+      // ---- Configuration ----------------------------------------------------
+      // Change this to your server's LAN IP if OBS runs on a different
+      // machine on the same network.
+      const SERVER_URL = `ws://${location.host}`;
+
+      // DOM elements
+      const wrapperEl = document.getElementById("overlayBarWrapper");
+      const textEl = document.getElementById("overlayText");
+      const debugEl = document.getElementById("debugStatus");
+
+      // ---- WebSocket connection ---------------------------------------------
+      let socket = null;
+      let reconnectTimer = null;
+      let reconnectDelay = 1000;
+
+      function debug(label) {
+        debugEl.textContent = label;
+        console.log("[overlay]", label);
+      }
+
+      function connect() {
+        if (socket) {
+          socket.onclose = null;
+          socket.close();
+          socket = null;
+        }
+
+        debug("Connecting…");
+        socket = new WebSocket(SERVER_URL);
+
+        socket.addEventListener("open", () => {
+          debug("Connected");
+          reconnectDelay = 1000;
+        });
+
+        // When we receive text from the server, display it in the bar.
+        socket.addEventListener("message", (event) => {
+          const rawText = event.data;
+
+          if (rawText === "") {
+            // Empty string means "clear the overlay" — collapse the bar
+            textEl.textContent = "";
+            wrapperEl.classList.remove("visible");
+            return;
+          }
+
+          // ---- Safely escape text to prevent HTML/JS injection --------------
+          // Set via textContent so user input is NEVER parsed as HTML.
+          // For multi-line text we replace newlines with a " | " separator
+          // since the bar is single-line by design.  If you need true
+          // multi-line, change white-space on .overlay-text to "normal"
+          // and adjust the bar height as needed.
+          const displayText = rawText.replace(/\n/g, "  |  ");
+          textEl.textContent = displayText;
+
+          // Expand the bar
+          wrapperEl.classList.add("visible");
+        });
+
+        socket.addEventListener("close", () => {
+          debug("Disconnected — retrying…");
+          scheduleReconnect();
+        });
+
+        socket.addEventListener("error", (err) => {
+          console.error("[overlay] WebSocket error:", err);
+        });
+      }
+
+      function scheduleReconnect() {
+        if (reconnectTimer) return;
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+          connect();
+        }, reconnectDelay);
+      }
+
+      // ---- Initialize ------------------------------------------------------
+      connect();
+    })();
+  </script>
+</body>
+</html>

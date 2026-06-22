@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+  <title>Presentation Screen</title>
+
+  <!--
+  ===========================================================================
+  PRESENTATION SCREEN PAGE
+  ===========================================================================
+  Open this page on a second monitor, projector, or any screen you want
+  your audience to see.  It fills the entire viewport with a dark navy
+  background and displays the text from the control page, centered and
+  in large uppercase type.
+
+  URL:  http://localhost:3001/screen.html
+
+  This page connects to the same WebSocket server as the OBS overlay,
+  so whatever you type on the control page appears here instantly.
+  -->
+
+  <!-- Lato + PT Sans Narrow fonts (matches the reference design) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&family=PT+Sans+Narrow:wght@700&display=swap"
+    rel="stylesheet"
+  />
+
+  <style>
+    /* ---- Reset & base ---------------------------------------------------- */
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    strong, b {
+      font-weight: 700;
+    }
+
+    body {
+      margin: 0;
+      color: #fff;
+      font-size: 1.125rem;
+      font-weight: 400;
+      font-family: Lato, sans-serif;
+      line-height: 1.5;
+      /* Solid dark navy background — fills the entire screen */
+      background-color: #2b404e;
+    }
+
+    /* ---- Full-screen centered container ------------------------------------
+       |
+       |  Covers the entire viewport.  Flexbox centers the text both
+       |  horizontally and vertically.  Padding keeps text away from edges.
+       |  ----------------------------------------------------------------- */
+    .screen-container {
+      display: -webkit-box;
+      display: -webkit-flex;
+      display: -ms-flexbox;
+      display: flex;
+      -webkit-flex-direction: column;
+      -ms-flex-direction: column;
+      flex-direction: column;
+      -webkit-box-pack: center;
+      -ms-flex-pack: center;
+      -webkit-justify-content: center;
+      justify-content: center;
+      -webkit-align-items: center;
+      -webkit-box-align: center;
+      -ms-flex-align: center;
+      align-items: center;
+      text-align: center;
+      color: #fff;
+      background-color: #2b404e;
+      position: absolute;
+      padding: 64px;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      left: 0;
+    }
+
+    /* ---- The display text --------------------------------------------------
+       |
+       |  Customizable properties:
+       |    font-family       — PT Sans Narrow is the default (condensed, bold).
+       |    font-size         — 8vw scales with viewport width.  Use a fixed
+       |                         value like "96px" if you prefer.
+       |    text-transform    — "uppercase" (default), "none", or "capitalize".
+       |    letter-spacing    — 0.25rem adds breathing room; set to 0 to tighten.
+       |    color             — white (#fff) by default.
+       |  ----------------------------------------------------------------- */
+    .screen-text {
+      margin: 0;
+      font-family: "PT Sans Narrow", sans-serif;
+      font-size: 8vw;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.25rem;
+      line-height: 1.167;
+      /* Fade in when text changes */
+      opacity: 0;
+      -webkit-transition: opacity 0.5s ease-out;
+      transition: opacity 0.5s ease-out;
+    }
+
+    .screen-text.visible {
+      opacity: 1;
+    }
+
+    /* ---- Debug indicator (small dot in corner) --------------------------- */
+    .debug-status {
+      position: fixed;
+      bottom: 4px;
+      right: 8px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.3);
+      font-family: monospace;
+      pointer-events: none;
+      z-index: 999;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Full-screen centered container -->
+  <div class="screen-container">
+    <h1 id="screenText" class="screen-text"></h1>
+  </div>
+
+  <!-- Debug status -->
+  <div id="debugStatus" class="debug-status"></div>
+
+  <!-- ========================================================================= -->
+  <!-- WebSocket client script                                                   -->
+  <!-- ========================================================================= -->
+  <script>
+    (function () {
+      // ---- Configuration ----------------------------------------------------
+      const SERVER_URL = `ws://${location.host}`;
+
+      // DOM elements
+      const textEl = document.getElementById("screenText");
+      const debugEl = document.getElementById("debugStatus");
+
+      // ---- WebSocket connection ---------------------------------------------
+      let socket = null;
+      let reconnectTimer = null;
+      let reconnectDelay = 1000;
+
+      function debug(label) {
+        debugEl.textContent = label;
+        console.log("[screen]", label);
+      }
+
+      function connect() {
+        if (socket) {
+          socket.onclose = null;
+          socket.close();
+          socket = null;
+        }
+
+        debug("Connecting…");
+        socket = new WebSocket(SERVER_URL);
+
+        socket.addEventListener("open", () => {
+          debug("Connected");
+          reconnectDelay = 1000;
+        });
+
+        socket.addEventListener("message", (event) => {
+          const rawText = event.data;
+
+          if (rawText === "") {
+            // Empty string = clear the screen
+            textEl.textContent = "";
+            textEl.classList.remove("visible");
+            return;
+          }
+
+          // Safely set text (textContent prevents HTML/JS injection)
+          textEl.textContent = rawText;
+
+          // Trigger fade-in
+          // Force a reflow so the transition retriggers even if the
+          // text is the same as before
+          textEl.classList.remove("visible");
+          void textEl.offsetWidth; // force reflow
+          textEl.classList.add("visible");
+        });
+
+        socket.addEventListener("close", () => {
+          debug("Disconnected — retrying…");
+          scheduleReconnect();
+        });
+
+        socket.addEventListener("error", (err) => {
+          console.error("[screen] WebSocket error:", err);
+        });
+      }
+
+      function scheduleReconnect() {
+        if (reconnectTimer) return;
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+          connect();
+        }, reconnectDelay);
+      }
+
+      // ---- Initialize ------------------------------------------------------
+      connect();
+    })();
+  </script>
+</body>
+</html>
