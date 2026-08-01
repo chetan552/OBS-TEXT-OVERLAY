@@ -72,7 +72,8 @@
       // ---- Configuration ----------------------------------------------------
       // Change this to your server's LAN IP if you're running the overlay on
       // a different machine on the same network (see README).
-      const SERVER_URL = `ws://${location.host}`;
+      // Use wss:// on HTTPS deployments (Render/Railway) and ws:// on local http.
+      const SERVER_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
 
       // DOM elements
       const statusEl = document.getElementById("status");
@@ -177,7 +178,7 @@
       };
 
       // Update the overlay URL shown on the page to match the current host
-      overlayUrlEl.textContent = `http://${location.host}/overlay.html`;
+      overlayUrlEl.textContent = `${location.protocol}//${location.host}/overlay.html`;
 
       // ---- WebSocket connection ---------------------------------------------
       let socket = null;

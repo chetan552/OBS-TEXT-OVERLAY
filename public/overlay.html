@@ -152,7 +152,8 @@
       // ---- Configuration ----------------------------------------------------
       // Change this to your server's LAN IP if OBS runs on a different
       // machine on the same network.
-      const SERVER_URL = `ws://${location.host}`;
+      // Use wss:// on HTTPS deployments (Render/Railway) and ws:// on local http.
+      const SERVER_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
 
       // DOM elements
       const wrapperEl = document.getElementById("overlayBarWrapper");

@@ -1,0 +1,14 @@
+# Render Blueprint for the OBS Text Overlay WebSocket server.
+# Deploy: Render dashboard → New + → Blueprint → connect this repo → Apply.
+# WebSockets work automatically over the service's HTTPS/WSS domain.
+services:
+  - type: web
+    name: obs-text-overlay
+    runtime: node
+    plan: free            # free tier spins down after ~15 min idle (cold start on next hit)
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /control.html
+    envVars:
+      - key: NODE_VERSION
+        value: "20"

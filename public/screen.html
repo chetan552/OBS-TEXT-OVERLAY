@@ -145,7 +145,8 @@
   <script>
     (function () {
       // ---- Configuration ----------------------------------------------------
-      const SERVER_URL = `ws://${location.host}`;
+      // Use wss:// on HTTPS deployments (Render/Railway) and ws:// on local http.
+      const SERVER_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
 
       // DOM elements
       const textEl = document.getElementById("screenText");
