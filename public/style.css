@@ -109,6 +109,11 @@ html, body {
 }
 
 /* ---- Text input ---------------------------------------------------------- */
+/* Wrapper positions the autocomplete dropdown relative to the input. */
+.input-wrapper {
+  position: relative;
+}
+
 .text-input {
   display: block;
   width: 100%;
@@ -128,6 +133,41 @@ html, body {
 
 .text-input::placeholder {
   color: #6078a0;
+}
+
+/* ---- Book autocomplete dropdown ------------------------------------------ */
+.autocomplete {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #0f3460;
+  border: 2px solid #1a508b;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  text-align: left;
+  /* Hidden by default; JS toggles the "open" class when there are matches. */
+  display: none;
+}
+
+.autocomplete.open {
+  display: block;
+}
+
+.autocomplete-item {
+  padding: 0.55rem 1rem;
+  font-size: 1rem;
+  color: #d0dcf0;
+  cursor: pointer;
+}
+
+.autocomplete-item:hover,
+.autocomplete-item.active {
+  background: #1a508b;
+  color: #ffffff;
 }
 
 /* ---- Buttons ------------------------------------------------------------- */
@@ -168,6 +208,73 @@ html, body {
 
 .btn-secondary:hover {
   background: #555577;
+}
+
+/* ---- Verse history ------------------------------------------------------- */
+.history {
+  margin-top: 1.5rem;
+  text-align: left;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.history-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8888a0;
+}
+
+.history-clear {
+  background: none;
+  border: none;
+  color: #6bbaff;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0.1rem 0.3rem;
+}
+
+.history-clear:hover {
+  color: #a0c8ff;
+  text-decoration: underline;
+}
+
+.history-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.history-chip {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+  color: #d0dcf0;
+  background: #0f3460;
+  border: 1px solid #1a508b;
+  border-radius: 16px;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.history-chip:hover {
+  background: #1a508b;
+  border-color: #4da6ff;
+  color: #ffffff;
+}
+
+.history-empty {
+  font-size: 0.8rem;
+  color: #6078a0;
+  font-style: italic;
 }
 
 /* ---- Hint text ----------------------------------------------------------- */
