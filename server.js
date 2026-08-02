@@ -1,196 +1,793 @@
 // =============================================================================
-// OBS Text Overlay — WebSocket Server
+// TextPresenter — multi-tenant WebSocket server
 // =============================================================================
-// This server does three things:
-//   1. Serves static files (control.html, overlay.html, style.css) from /public
-//   2. Hosts a WebSocket server that receives text from the control page
-//   3. Broadcasts that text to every connected overlay page
+// One server instance hosts many independent channels (one per church).
+// Channels never see each other's text: every socket is bound to exactly one
+// channel at connection time, and broadcasts are scoped to that channel's
+// socket set.
 //
-// The latest message is kept in memory so when an overlay page refreshes
-// (or reconnects), it immediately receives the current text.
+// Two kinds of credential, because the two kinds of page have very different
+// constraints:
+//
+//   Control page   /c/<channel>              operator logs in with a password;
+//                                            the session lives in a cookie.
+//   Overlay/screen /v/<viewToken>/...        OBS and projectors can't fill in
+//                                            a login form, so they authenticate
+//                                            with an unguessable URL. View
+//                                            sockets are strictly read-only —
+//                                            a leaked overlay URL can watch,
+//                                            but can never push text.
+//
+// Admin (/admin) manages channels and is gated by ADMIN_PASSWORD.
 
 const express = require("express");
 const http = require("http");
-const { WebSocketServer } = require("ws");
+const crypto = require("crypto");
+const fs = require("fs");
 const path = require("path");
+const { WebSocketServer } = require("ws");
+
+// Load .env before anything reads process.env. Variables already present in
+// the environment (launchd, Render) are left alone.
+const loadedFromEnvFile = require("./lib/env").loadEnv();
+
+const store = require("./lib/store");
+const theme = require("./lib/theme");
+const {
+  verifyPassword,
+  signSession,
+  verifySession,
+  parseCookies,
+  serializeCookie,
+} = require("./lib/auth");
 
 // ---- Configuration ----------------------------------------------------------
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
-const MAX_MESSAGE_BYTES = 64 * 1024; // 64 KiB — more than enough for display text
+const MAX_MESSAGE_BYTES = 64 * 1024; // 64 KiB — far more than any verse needs
+const SESSION_MAX_AGE = 30 * 24 * 60 * 60; // 30 days, in seconds
+const ADMIN_SESSION_MAX_AGE = 12 * 60 * 60; // 12 hours
+const MESSAGE_COOLDOWN_MS = 150; // per channel, not per server
+const HEARTBEAT_MS = 30_000;
 
-// Allowed WebSocket origins (empty = allow all, common for local-only tools)
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim())
-  : []; // Default: allow all origins (safe for localhost/LAN)
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
 
-// ---- Express app (serves static files) --------------------------------------
+// Exact origins allowed to open a WebSocket, e.g.
+// "https://text.example.org,http://192.168.1.50:3000".
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
+
+// Allow any private-network / localhost origin in addition to the list above.
+// This is what lets your own church's OBS and projector connect over the LAN
+// while everyone else comes in through the public hostname.
+const ALLOW_PRIVATE_ORIGINS = process.env.ALLOW_PRIVATE_ORIGINS !== "false";
+
+// ---- Load persistent state --------------------------------------------------
+store.load();
+const SESSION_SECRET = store.loadOrCreateSessionSecret();
+
+if (!ADMIN_PASSWORD) {
+  console.warn(
+    "[warn] ADMIN_PASSWORD is not set — the /admin panel is disabled.\n" +
+      "       Put ADMIN_PASSWORD=... in .env (next to package.json), or set it\n" +
+      "       in the environment. Channels can still be managed with `npm run channel`."
+  );
+}
+
+// =============================================================================
+// Views — HTML pages served only after an auth check
+// =============================================================================
+// These live outside the static directory on purpose. If they were served by
+// express.static, anyone could fetch /control.html and skip the login.
+
+const viewsDir = path.join(__dirname, "views");
+const viewCache = new Map();
+
+function renderView(name, config = {}) {
+  let html = viewCache.get(name);
+  if (html === undefined) {
+    html = fs.readFileSync(path.join(viewsDir, `${name}.html`), "utf8");
+    viewCache.set(name, html);
+  }
+  // Pages read their channel/token/URLs from window.__TP__ rather than
+  // parsing their own location, so the URL scheme can change freely.
+  const script = `<script>window.__TP__=${JSON.stringify(config).replace(
+    /</g,
+    "\\u003c"
+  )};</script>`;
+  return html.replace("<!--TP_CONFIG-->", script);
+}
+
+function sendView(res, name, config) {
+  res.type("html").send(renderView(name, config));
+}
+
+// =============================================================================
+// Express app
+// =============================================================================
+
 const app = express();
+
+// cloudflared connects from localhost, so only loopback proxies are trusted.
+// Trusting every proxy would let a client forge X-Forwarded-For and dodge
+// rate limits.
+app.set("trust proxy", "loopback");
+app.disable("x-powered-by");
+
+app.use(express.urlencoded({ extended: false, limit: "16kb" }));
+app.use(express.json({ limit: "16kb" }));
 
 // ---- Security headers -------------------------------------------------------
 app.use((req, res, next) => {
-  // Prevent MIME-type sniffing
   res.setHeader("X-Content-Type-Options", "nosniff");
-
-  // Prevent clickjacking (overlay/screen pages shouldn't be framed elsewhere)
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
-
-  // Basic CSP: only allow fonts from Google Fonts, everything else same-origin
+  res.setHeader("Referrer-Policy", "same-origin");
   res.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; font-src 'self' https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:;"
+    "default-src 'self'; " +
+      "font-src 'self' https://fonts.gstatic.com; " +
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+      "script-src 'self' 'unsafe-inline'; " +
+      "connect-src 'self' ws: wss:; " +
+      "frame-ancestors 'self'"
   );
-
   next();
 });
 
-// ---- Serve static files -----------------------------------------------------
-const publicDir = path.join(__dirname, "public");
-app.use(express.static(publicDir));
+// Only assets live here — every HTML page goes through a route with an auth check.
+app.use(
+  express.static(path.join(__dirname, "public"), {
+    index: false,
+    dotfiles: "ignore",
+  })
+);
 
-// ---- Hide Express default error stack traces --------------------------------
-// Don't leak internals — send a generic error response instead.
-app.use((err, req, res, next) => {
-  console.error(`[error] ${err.message}`);
-  res.status(500).send("Internal Server Error");
-});
+// ---- Session helpers --------------------------------------------------------
 
-// ---- HTTP server (Express + WebSocket share the same port) ------------------
-const server = http.createServer(app);
+/** Cookies must be Secure in public (HTTPS) use but not over plain-http LAN. */
+function isSecureRequest(req) {
+  return req.secure || req.get("x-forwarded-proto") === "https";
+}
 
-// ---- WebSocket server -------------------------------------------------------
-const wss = new WebSocketServer({ server });
+function controlCookieName(channelId) {
+  return `tp_c_${channelId.replace(/-/g, "_")}`;
+}
 
-// We keep the most recent message in memory so that when a new overlay
-// client connects, it can immediately show the current text.
-let latestMessage = "";
-
-// ---- Helper: validate WebSocket origin --------------------------------------
-function isOriginAllowed(origin) {
-  // No origin = same-origin request (browser doesn't send Origin for ws://
-  // to the same host). Always allow these.
-  if (!origin) return true;
-
-  // If no allowed origins are configured, allow everything (default).
-  if (ALLOWED_ORIGINS.length === 0) return true;
-
-  return ALLOWED_ORIGINS.some(
-    (allowed) => origin === allowed || origin.startsWith(allowed)
+function setSession(res, req, name, claims, maxAge) {
+  res.setHeader(
+    "Set-Cookie",
+    serializeCookie(name, signSession(claims, SESSION_SECRET, maxAge), {
+      maxAge,
+      secure: isSecureRequest(req),
+    })
   );
 }
 
-// ---- Helper: broadcast a message to every connected client ------------------
-function broadcast(data, senderSocket) {
-  const payload = typeof data === "string" ? data : data.toString();
-  wss.clients.forEach((client) => {
-    // Only send to clients that are still connected and ready
-    if (client.readyState === 1 /* WebSocket.OPEN */) {
-      client.send(payload);
-    }
-  });
+function clearSession(res, req, name) {
+  res.setHeader(
+    "Set-Cookie",
+    serializeCookie(name, "", { maxAge: 0, secure: isSecureRequest(req) })
+  );
 }
 
-// ---- Rate limiter: per-IP message throttle ----------------------------------
-// Simple token-bucket: each IP gets one message per 200 ms (5/sec).
-// This is per-connection, not shared across connections from the same IP —
-// adequate for the threat model of a local-only tool.
-const lastMessageTime = new Map();
+/** Claims for a valid operator session on this channel, or null. */
+function readControlSession(req, channelId) {
+  const cookies = parseCookies(req.headers.cookie);
+  const claims = verifySession(cookies[controlCookieName(channelId)], SESSION_SECRET);
+  if (!claims || claims.channel !== channelId) return null;
+  return claims;
+}
 
-function isRateLimited(socket, req) {
-  const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "";
-  const now = Date.now();
-  const last = lastMessageTime.get(ip) || 0;
-  const cooldown = 200; // ms between messages from the same IP
+function isAdmin(req) {
+  if (!ADMIN_PASSWORD) return false;
+  const cookies = parseCookies(req.headers.cookie);
+  const claims = verifySession(cookies.tp_admin, SESSION_SECRET);
+  return Boolean(claims && claims.role === "admin");
+}
 
-  if (now - last < cooldown) {
-    return true;
+// A brief delay on failed logins takes brute-forcing a channel password off
+// the table without needing to track attempts across restarts.
+function loginDelay() {
+  return new Promise((resolve) => setTimeout(resolve, 400));
+}
+
+// =============================================================================
+// Routes — landing
+// =============================================================================
+
+app.get("/", (req, res) => {
+  sendView(res, "index", { hasAdmin: Boolean(ADMIN_PASSWORD) });
+});
+
+app.get("/healthz", (req, res) => {
+  res.json({ ok: true, channels: store.listChannels().length });
+});
+
+// =============================================================================
+// Routes — control page (operators)
+// =============================================================================
+
+app.get("/c/:channelId", (req, res) => {
+  const { channelId } = req.params;
+  const channel = store.getChannel(channelId);
+
+  if (!channel || channel.disabled) {
+    return res.status(404).type("html").send(renderView("not-found", {}));
   }
-  lastMessageTime.set(ip, now);
+
+  if (!readControlSession(req, channelId)) {
+    return sendView(res, "login", {
+      channelId,
+      channelName: channel.name,
+      error: req.query.error === "1" ? "Incorrect password." : "",
+    });
+  }
+
+  sendView(res, "control", {
+    role: "control",
+    channelId,
+    channelName: channel.name,
+    wsUrl: `/ws?channel=${encodeURIComponent(channelId)}`,
+    designUrl: `/c/${encodeURIComponent(channelId)}/design`,
+    overlayUrl: absoluteUrl(req, `/v/${channel.viewToken}/overlay.html`),
+    screenUrl: absoluteUrl(req, `/v/${channel.viewToken}/screen.html`),
+  });
+});
+
+// ---- Design page ------------------------------------------------------------
+// Operators design their own church's look. It's their screen, and routing
+// every tweak through the admin would make the feature useless in practice.
+
+app.get("/c/:channelId/design", (req, res) => {
+  const { channelId } = req.params;
+  const channel = store.getChannel(channelId);
+
+  if (!channel || channel.disabled) {
+    return res.status(404).type("html").send(renderView("not-found", {}));
+  }
+  if (!readControlSession(req, channelId)) {
+    return res.redirect(`/c/${encodeURIComponent(channelId)}`);
+  }
+
+  sendView(res, "design", {
+    channelId,
+    channelName: channel.name,
+    theme: store.getTheme(channelId),
+    defaults: theme.defaultTheme(),
+    fonts: theme.FONTS.map((f) => ({ id: f.id, label: f.label })),
+    fields: { overlay: theme.OVERLAY_FIELDS, screen: theme.SCREEN_FIELDS },
+    controlUrl: `/c/${encodeURIComponent(channelId)}`,
+  });
+});
+
+/** Save a theme. Applies live to everything connected to this channel. */
+app.put("/c/:channelId/api/theme", (req, res) => {
+  const { channelId } = req.params;
+  if (!requireControl(req, res, channelId)) return;
+
+  const saved = store.setTheme(channelId, req.body);
+  broadcastTheme(channelId, saved);
+  res.json({ theme: saved });
+});
+
+/** Restore the original shipped design. */
+app.post("/c/:channelId/api/theme/reset", (req, res) => {
+  const { channelId } = req.params;
+  if (!requireControl(req, res, channelId)) return;
+
+  const saved = store.resetTheme(channelId);
+  broadcastTheme(channelId, saved);
+  console.log(`[design] "${channelId}" reset to the default theme`);
+  res.json({ theme: saved });
+});
+
+/** Guard for the operator-facing JSON endpoints. */
+function requireControl(req, res, channelId) {
+  const channel = store.getChannel(channelId);
+  if (!channel || channel.disabled) {
+    res.status(404).json({ error: "No such channel" });
+    return false;
+  }
+  if (!readControlSession(req, channelId)) {
+    res.status(401).json({ error: "Not signed in" });
+    return false;
+  }
+  return true;
+}
+
+app.post("/c/:channelId/login", async (req, res) => {
+  const { channelId } = req.params;
+  const channel = store.getChannel(channelId);
+
+  if (!channel || channel.disabled) {
+    return res.status(404).type("html").send(renderView("not-found", {}));
+  }
+
+  const password = typeof req.body.password === "string" ? req.body.password : "";
+  if (!verifyPassword(password, channel.passwordHash)) {
+    await loginDelay();
+    console.log(`[auth] Failed control login for "${channelId}" from ${clientIp(req)}`);
+    return res.redirect(`/c/${encodeURIComponent(channelId)}?error=1`);
+  }
+
+  setSession(res, req, controlCookieName(channelId), { channel: channelId }, SESSION_MAX_AGE);
+  console.log(`[auth] Control login for "${channelId}" from ${clientIp(req)}`);
+  res.redirect(`/c/${encodeURIComponent(channelId)}`);
+});
+
+app.post("/c/:channelId/logout", (req, res) => {
+  clearSession(res, req, controlCookieName(req.params.channelId));
+  res.redirect(`/c/${encodeURIComponent(req.params.channelId)}`);
+});
+
+// =============================================================================
+// Routes — view pages (OBS overlay, projector screen)
+// =============================================================================
+
+app.get("/v/:viewToken/:page", (req, res) => {
+  const page = req.params.page.replace(/\.html$/, "");
+  if (page !== "overlay" && page !== "screen") {
+    return res.status(404).type("html").send(renderView("not-found", {}));
+  }
+
+  const channel = store.getChannelByViewToken(req.params.viewToken);
+  if (!channel) {
+    return res.status(404).type("html").send(renderView("not-found", {}));
+  }
+
+  // View pages are per-church URLs that should never be cached by an
+  // intermediary, and never indexed.
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+
+  sendView(res, page, {
+    role: "view",
+    channelId: channel.id,
+    channelName: channel.name,
+    wsUrl: `/ws?view=${encodeURIComponent(req.params.viewToken)}`,
+  });
+});
+
+// Bare /v/<token> is a convenient thing to type on a projector machine.
+app.get("/v/:viewToken", (req, res) => {
+  res.redirect(`/v/${encodeURIComponent(req.params.viewToken)}/screen.html`);
+});
+
+// =============================================================================
+// Routes — admin
+// =============================================================================
+
+function requireAdmin(req, res, next) {
+  if (!ADMIN_PASSWORD) {
+    return res.status(503).type("text").send("Admin panel disabled: ADMIN_PASSWORD is not set.");
+  }
+  if (!isAdmin(req)) {
+    if (req.path.startsWith("/admin/api/")) {
+      return res.status(401).json({ error: "Not signed in" });
+    }
+    return sendView(res, "admin-login", { error: req.query.error === "1" ? "Incorrect password." : "" });
+  }
+  next();
+}
+
+app.post("/admin/login", async (req, res) => {
+  if (!ADMIN_PASSWORD) {
+    return res.status(503).type("text").send("Admin panel disabled: ADMIN_PASSWORD is not set.");
+  }
+
+  const password = typeof req.body.password === "string" ? req.body.password : "";
+  // Compare through the same constant-time path used for channel passwords by
+  // padding both sides to equal length via HMAC-free comparison.
+  if (!safeEqual(password, ADMIN_PASSWORD)) {
+    await loginDelay();
+    console.log(`[auth] Failed admin login from ${clientIp(req)}`);
+    return res.redirect("/admin?error=1");
+  }
+
+  setSession(res, req, "tp_admin", { role: "admin" }, ADMIN_SESSION_MAX_AGE);
+  console.log(`[auth] Admin login from ${clientIp(req)}`);
+  res.redirect("/admin");
+});
+
+app.post("/admin/logout", (req, res) => {
+  clearSession(res, req, "tp_admin");
+  res.redirect("/admin");
+});
+
+app.get("/admin", requireAdmin, (req, res) => {
+  sendView(res, "admin", {});
+});
+
+app.get("/admin/api/channels", requireAdmin, (req, res) => {
+  res.json({ channels: store.listChannels().map((c) => decorate(req, c)) });
+});
+
+app.post("/admin/api/channels", requireAdmin, (req, res) => {
+  try {
+    const channel = store.createChannel({
+      id: String(req.body.id || "").trim().toLowerCase(),
+      name: String(req.body.name || ""),
+      password: String(req.body.password || ""),
+    });
+    console.log(`[admin] Created channel "${channel.id}"`);
+    res.status(201).json({ channel: decorate(req, channel) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/admin/api/channels/:id/password", requireAdmin, (req, res) => {
+  withChannel(req, res, () => {
+    const channel = store.setPassword(req.params.id, String(req.body.password || ""));
+    console.log(`[admin] Reset password for "${channel.id}"`);
+    // Any existing operator sessions stay valid; that's intentional so a
+    // password reset doesn't kick a live service off mid-sermon.
+    res.json({ channel: decorate(req, channel) });
+  });
+});
+
+app.post("/admin/api/channels/:id/rotate-token", requireAdmin, (req, res) => {
+  withChannel(req, res, () => {
+    const channel = store.rotateViewToken(req.params.id);
+    // The old URL is dead now, so drop anyone still watching on it.
+    disconnectViewers(channel.id);
+    console.log(`[admin] Rotated view token for "${channel.id}"`);
+    res.json({ channel: decorate(req, channel) });
+  });
+});
+
+app.post("/admin/api/channels/:id/disabled", requireAdmin, (req, res) => {
+  withChannel(req, res, () => {
+    const channel = store.setDisabled(req.params.id, Boolean(req.body.disabled));
+    if (channel.disabled) closeRoom(channel.id);
+    console.log(`[admin] ${channel.disabled ? "Disabled" : "Enabled"} channel "${channel.id}"`);
+    res.json({ channel: decorate(req, channel) });
+  });
+});
+
+app.post("/admin/api/channels/:id/name", requireAdmin, (req, res) => {
+  withChannel(req, res, () => {
+    const channel = store.renameChannel(req.params.id, String(req.body.name || ""));
+    res.json({ channel: decorate(req, channel) });
+  });
+});
+
+app.delete("/admin/api/channels/:id", requireAdmin, (req, res) => {
+  withChannel(req, res, () => {
+    closeRoom(req.params.id);
+    store.deleteChannel(req.params.id);
+    console.log(`[admin] Deleted channel "${req.params.id}"`);
+    res.json({ ok: true });
+  });
+});
+
+function withChannel(req, res, fn) {
+  try {
+    fn();
+  } catch (err) {
+    const status = /No such channel/.test(err.message) ? 404 : 400;
+    res.status(status).json({ error: err.message });
+  }
+}
+
+/** Add live connection counts and ready-to-copy URLs for the admin table. */
+function decorate(req, channel) {
+  const room = rooms.get(channel.id);
+  return {
+    ...channel,
+    controlUrl: absoluteUrl(req, `/c/${channel.id}`),
+    overlayUrl: absoluteUrl(req, `/v/${channel.viewToken}/overlay.html`),
+    screenUrl: absoluteUrl(req, `/v/${channel.viewToken}/screen.html`),
+    connections: room ? room.sockets.size : 0,
+  };
+}
+
+/**
+ * Build an absolute URL for the church to copy. PUBLIC_URL wins when set,
+ * which matters behind a tunnel: the request Host may be an internal name
+ * while the church needs the public hostname.
+ */
+function absoluteUrl(req, pathname) {
+  if (PUBLIC_URL) return `${PUBLIC_URL}${pathname}`;
+  const proto = isSecureRequest(req) ? "https" : "http";
+  return `${proto}://${req.get("host")}${pathname}`;
+}
+
+function clientIp(req) {
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
+
+/** Constant-time string comparison that doesn't leak length via early exit. */
+function safeEqual(a, b) {
+  const ha = crypto.createHash("sha256").update(String(a)).digest();
+  const hb = crypto.createHash("sha256").update(String(b)).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+// ---- Fallbacks --------------------------------------------------------------
+
+app.use((req, res) => {
+  res.status(404).type("html").send(renderView("not-found", {}));
+});
+
+app.use((err, req, res, next) => {
+  console.error(`[error] ${err.message}`);
+  res.status(500).type("text").send("Internal Server Error");
+});
+
+// =============================================================================
+// WebSocket server
+// =============================================================================
+
+const server = http.createServer(app);
+
+// noServer + a manual upgrade handler lets us reject with a real HTTP status
+// instead of completing the handshake and immediately closing.
+const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
+
+/**
+ * Live state per channel. `latest` is what a page receives the moment it
+ * connects, so an OBS source that reloads mid-service comes back showing the
+ * current verse instead of a blank bar.
+ */
+const rooms = new Map(); // channelId -> { latest, lastMessageAt, sockets:Set }
+
+function getRoom(channelId) {
+  let room = rooms.get(channelId);
+  if (!room) {
+    room = { latest: "", lastMessageAt: 0, sockets: new Set() };
+    rooms.set(channelId, room);
+  }
+  return room;
+}
+
+function closeRoom(channelId) {
+  const room = rooms.get(channelId);
+  if (!room) return;
+  for (const socket of room.sockets) socket.close(4404, "Channel unavailable");
+  rooms.delete(channelId);
+}
+
+/**
+ * Push a theme to everything watching a channel. This is what makes a design
+ * change land on OBS and the projector without anyone reloading a source
+ * mid-service.
+ */
+function broadcastTheme(channelId, value) {
+  const room = rooms.get(channelId);
+  if (!room) return;
+  const payload = JSON.stringify({ type: "theme", theme: value });
+  for (const socket of room.sockets) {
+    if (socket.readyState === 1 /* OPEN */) socket.send(payload);
+  }
+}
+
+function disconnectViewers(channelId) {
+  const room = rooms.get(channelId);
+  if (!room) return;
+  for (const socket of room.sockets) {
+    if (socket.tpRole === "view") socket.close(4401, "View link changed");
+  }
+}
+
+// ---- Origin policy ----------------------------------------------------------
+
+function isPrivateOrigin(origin) {
+  let host;
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    return false;
+  }
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1") return true;
+  if (host.endsWith(".local")) return true;
+  // RFC 1918 ranges — the LAN case.
+  if (/^10\./.test(host)) return true;
+  if (/^192\.168\./.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
   return false;
 }
 
-// Periodically clean up the rate-limit map so it doesn't leak memory
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, timestamp] of lastMessageTime) {
-    if (now - timestamp > 60_000) {
-      lastMessageTime.delete(ip);
-    }
-  }
-}, 60_000);
+function isOriginAllowed(origin) {
+  // OBS Browser Sources and other non-browser clients send no Origin header.
+  // They still need a valid view token to get anywhere, so this is safe.
+  if (!origin) return true;
 
-// ---- WebSocket connection handling ------------------------------------------
-wss.on("connection", (socket, req) => {
-  const clientIp =
-    req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
-  const origin = req.headers["origin"] || "";
+  const normalized = origin.replace(/\/+$/, "");
+  if (ALLOWED_ORIGINS.length === 0 && !PUBLIC_URL) return true; // dev default
+  if (ALLOWED_ORIGINS.includes(normalized)) return true;
+  if (PUBLIC_URL && normalized === PUBLIC_URL) return true;
+  if (ALLOW_PRIVATE_ORIGINS && isPrivateOrigin(normalized)) return true;
+  return false;
+}
 
-  // ---- Origin check ---------------------------------------------------------
+// ---- Upgrade handling (authenticate before the handshake) -------------------
+
+server.on("upgrade", (req, socket, head) => {
+  const url = new URL(req.url, "http://placeholder");
+  if (url.pathname !== "/ws") return rejectUpgrade(socket, 404, "Not Found");
+
+  const origin = req.headers.origin || "";
   if (!isOriginAllowed(origin)) {
-    console.log(
-      `[security] Rejected WebSocket from origin "${origin}" (${clientIp})`
-    );
-    socket.close(4403, "Origin not allowed");
-    return;
+    console.log(`[security] Rejected WebSocket origin "${origin}"`);
+    return rejectUpgrade(socket, 403, "Forbidden");
   }
 
-  console.log(`[connect] Client connected from ${clientIp}`);
+  const viewToken = url.searchParams.get("view");
+  const channelParam = url.searchParams.get("channel");
 
-  // Immediately send the latest message so the overlay shows the current
-  // text even if the page was just refreshed.
-  if (latestMessage !== "") {
-    socket.send(latestMessage);
+  let channel = null;
+  let role = null;
+
+  if (viewToken) {
+    channel = store.getChannelByViewToken(viewToken);
+    role = "view";
+  } else if (channelParam) {
+    channel = store.getChannel(channelParam);
+    // The session cookie rides along on the handshake because the WebSocket
+    // is same-origin, so the operator's password never touches client JS.
+    if (channel && !channel.disabled && readControlSession(req, channel.id)) {
+      role = "control";
+    } else {
+      channel = null;
+    }
   }
 
-  // When this client sends a message, validate, rate-limit, update
-  // latestMessage, and broadcast.
+  if (!channel || channel.disabled || !role) {
+    return rejectUpgrade(socket, 401, "Unauthorized");
+  }
+
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    ws.tpChannelId = channel.id;
+    ws.tpRole = role;
+    wss.emit("connection", ws, req);
+  });
+});
+
+function rejectUpgrade(socket, status, message) {
+  socket.write(
+    `HTTP/1.1 ${status} ${message}\r\n` +
+      "Connection: close\r\n" +
+      "Content-Length: 0\r\n\r\n"
+  );
+  socket.destroy();
+}
+
+// ---- Connection handling ----------------------------------------------------
+
+wss.on("connection", (socket, req) => {
+  const channelId = socket.tpChannelId;
+  const role = socket.tpRole;
+  const room = getRoom(channelId);
+
+  room.sockets.add(socket);
+  socket.isAlive = true;
+  socket.on("pong", () => {
+    socket.isAlive = true;
+  });
+
+  console.log(
+    `[connect] ${role} joined "${channelId}" from ${clientIp(req)} ` +
+      `(${room.sockets.size} on channel)`
+  );
+
+  // Theme first, so a page styles itself before any text appears — otherwise
+  // a reconnecting overlay would flash the default design for a frame.
+  socket.send(JSON.stringify({ type: "theme", theme: store.getTheme(channelId) }));
+
+  // Then catch the page up to whatever is currently on screen.
+  if (room.latest !== "") {
+    socket.send(JSON.stringify({ type: "text", text: room.latest }));
+  }
+
   socket.on("message", (data) => {
-    // ---- Size limit ----------------------------------------------------------
-    if (Buffer.byteLength(data) > MAX_MESSAGE_BYTES) {
-      console.log(
-        `[security] Rejected oversized message (${Buffer.byteLength(data)} bytes) from ${clientIp}`
-      );
+    // Read-only by design: a leaked overlay URL must never be able to
+    // put text on another church's screen.
+    if (role !== "control") {
+      console.log(`[security] Dropped message from view socket on "${channelId}"`);
       return;
     }
 
-    // ---- Rate limit ----------------------------------------------------------
-    if (isRateLimited(socket, req)) {
-      console.log(`[security] Rate-limited message from ${clientIp}`);
+    // Rate limit per channel, so a runaway control page can only ever
+    // throttle its own church.
+    const now = Date.now();
+    if (now - room.lastMessageAt < MESSAGE_COOLDOWN_MS) return;
+    room.lastMessageAt = now;
+
+    // Control pages send {type:"text", text:"…"}. Anything else is ignored:
+    // themes are saved over HTTP so they persist, not pushed over the socket.
+    let message;
+    try {
+      message = JSON.parse(data.toString());
+    } catch {
       return;
     }
+    if (!message || message.type !== "text" || typeof message.text !== "string") return;
 
-    const text = data.toString();
-    console.log(`[message] Received: "${text}"`);
-    latestMessage = text;
-    broadcast(text);
+    room.latest = message.text;
+    store.touchChannel(channelId);
+
+    const payload = JSON.stringify({ type: "text", text: message.text });
+    for (const client of room.sockets) {
+      if (client.readyState === 1 /* OPEN */) client.send(payload);
+    }
   });
 
-  // Log disconnections
-  socket.on("close", (code, reason) => {
-    console.log(`[disconnect] Client disconnected (code: ${code})`);
+  socket.on("close", () => {
+    room.sockets.delete(socket);
+    // Keep `latest` around: an empty room usually means the projector is
+    // being moved, not that the service ended.
+    console.log(`[disconnect] ${role} left "${channelId}" (${room.sockets.size} remain)`);
   });
 
-  // Log errors
   socket.on("error", (err) => {
-    console.error(`[error] ${err.message}`);
+    console.error(`[error] socket on "${channelId}": ${err.message}`);
   });
 });
 
-// ---- Start the server -------------------------------------------------------
+// A public server accumulates half-dead sockets behind NAT and sleeping
+// laptops. Ping every 30 s and drop anything that stops answering.
+const heartbeat = setInterval(() => {
+  for (const socket of wss.clients) {
+    if (socket.isAlive === false) {
+      socket.terminate();
+      continue;
+    }
+    socket.isAlive = false;
+    socket.ping();
+  }
+}, HEARTBEAT_MS);
+heartbeat.unref();
+
+// Pick up channels edited by the CLI (or a restored backup) without a restart.
+// A channel that disappears or is disabled on disk has its live sockets cut.
+store.watch((count) => {
+  console.log(`[store] channels.json changed — reloaded (${count} channels)`);
+  for (const channelId of [...rooms.keys()]) {
+    const channel = store.getChannel(channelId);
+    if (!channel || channel.disabled) closeRoom(channelId);
+  }
+});
+
+// =============================================================================
+// Start
+// =============================================================================
+
 server.listen(PORT, HOST, () => {
+  const base = PUBLIC_URL || `http://localhost:${PORT}`;
+  const channels = store.listChannels();
+
   console.log("");
-  console.log("╔═══════════════════════════════════════════════════════════╗");
-  console.log("║         OBS Text Overlay Server                           ║");
-  console.log("╠═══════════════════════════════════════════════════════════╣");
-  console.log(`║  Control:   http://localhost:${PORT}/control.html            ║`);
-  console.log(`║  Overlay:   http://localhost:${PORT}/overlay.html   (OBS)    ║`);
-  console.log(`║  Screen:    http://localhost:${PORT}/screen.html    (display) ║`);
-  console.log("╠═══════════════════════════════════════════════════════════╣");
-  console.log(`║  Bound to ${HOST}:${PORT}                                         ║`);
-  console.log("╚═══════════════════════════════════════════════════════════╝");
-  console.log("");
-  console.log("Control — type text and press Enter to send.");
-  console.log("Overlay — add as an OBS Browser Source (1920×1080).");
-  console.log("Screen  — open on a second monitor / projector.");
+  console.log("  TextPresenter — multi-channel server");
+  console.log("  ────────────────────────────────────");
+  console.log(`  Listening on   ${HOST}:${PORT}`);
+  console.log(`  Public base    ${base}`);
+  console.log(`  Admin panel    ${ADMIN_PASSWORD ? `${base}/admin` : "disabled (set ADMIN_PASSWORD)"}`);
+  // Surfacing this makes "I set it in .env but nothing happened" self-diagnosing.
+  console.log(
+    `  From .env      ${loadedFromEnvFile.length ? loadedFromEnvFile.join(", ") : "nothing (no .env file, or all values already set in the environment)"}`
+  );
+  console.log(`  Data dir       ${store.DATA_DIR}`);
+  console.log(`  Channels       ${channels.length}`);
+  for (const channel of channels) {
+    console.log(`    • ${channel.name}  →  ${base}/c/${channel.id}${channel.disabled ? "  (disabled)" : ""}`);
+  }
+  if (channels.length === 0) {
+    console.log('    (none yet — add one in the admin panel, or:');
+    console.log('     npm run channel -- add my-church "My Church")');
+  }
   console.log("");
 });
+
+function shutdown(signal) {
+  console.log(`\n[shutdown] ${signal} received — closing`);
+  for (const socket of wss.clients) socket.close(1001, "Server shutting down");
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

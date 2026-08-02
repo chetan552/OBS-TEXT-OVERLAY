@@ -10,6 +10,10 @@ npm-debug.log*
 .env.*
 !.env.example
 
+# Channel data — contains password hashes, view tokens and the session
+# signing secret. Never commit this; back it up separately.
+data/
+
 # OS generated files
 .DS_Store
 .DS_Store?

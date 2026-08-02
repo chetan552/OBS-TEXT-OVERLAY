@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>OBS Text Overlay — Control</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="/style.css" />
+  <!--TP_CONFIG-->
 </head>
 <body class="control-page">
 
@@ -21,7 +22,12 @@
   -->
 
   <div class="control-container">
-    <h1>OBS Text Overlay</h1>
+    <div class="control-header">
+      <h1 id="channelName">OBS Text Overlay</h1>
+      <form method="post" id="logoutForm">
+        <button type="submit" class="btn btn-secondary btn-small">Sign out</button>
+      </form>
+    </div>
     <p class="subtitle">Type your text below and press <kbd>Enter</kbd> to send it to the overlay.</p>
 
     <!-- Connection status badge -->
@@ -56,12 +62,34 @@
       <div id="historyList" class="history-list"></div>
     </div>
 
-    <p class="hint">
-      <strong>OBS Overlay URL:</strong>
-      <code id="overlayUrl">http://localhost:3000/overlay.html</code>
-      <br />
-      Add this as a <em>Browser Source</em> in OBS Studio (size: 1920×1080).
-    </p>
+    <!--
+      This church's private links. They carry a view token rather than a
+      login, because OBS Browser Sources can't sign in. Treat them as
+      secrets — anyone with the link can watch this channel's text.
+    -->
+    <div class="hint">
+      <div class="hint-head">
+        <p class="hint-title">Your church's links</p>
+        <a class="btn btn-secondary btn-small" id="designLink" href="#">Customize design</a>
+      </div>
+
+      <div class="link-row">
+        <span class="link-label">Overlay (OBS)</span>
+        <code class="link-value" id="overlayUrl"></code>
+        <button type="button" class="btn btn-secondary btn-small" data-copy="overlayUrl">Copy</button>
+      </div>
+
+      <div class="link-row">
+        <span class="link-label">Screen</span>
+        <code class="link-value" id="screenUrl"></code>
+        <button type="button" class="btn btn-secondary btn-small" data-copy="screenUrl">Copy</button>
+      </div>
+
+      <p class="hint-note">
+        Add the overlay link as a <em>Browser Source</em> in OBS Studio (1920×1080).
+        Open the screen link on your projector or second monitor.
+      </p>
+    </div>
   </div>
 
   <!-- ========================================================================= -->
@@ -72,8 +100,12 @@
       // ---- Configuration ----------------------------------------------------
       // Change this to your server's LAN IP if you're running the overlay on
       // a different machine on the same network (see README).
-      // Use wss:// on HTTPS deployments (Render/Railway) and ws:// on local http.
-      const SERVER_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+      // The server injects window.__TP__ with this channel's id and WebSocket
+      // path. The operator's session cookie rides along on the handshake, so
+      // no credential is ever exposed to this script.
+      const config = window.__TP__ || {};
+      const SERVER_URL =
+        `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${config.wsUrl}`;
 
       // DOM elements
       const statusEl = document.getElementById("status");
@@ -177,8 +209,27 @@
         "Revelation": [20,29,22,11,14,17,17,13,21,11,19,17,18,20,8,21,18,24,21,15,27,21],
       };
 
-      // Update the overlay URL shown on the page to match the current host
-      overlayUrlEl.textContent = `${location.protocol}//${location.host}/overlay.html`;
+      // ---- Channel identity and links ---------------------------------------
+      if (config.channelName) {
+        document.getElementById("channelName").textContent = config.channelName;
+        document.title = `${config.channelName} — TextPresenter`;
+      }
+      document.getElementById("logoutForm").action =
+        `/c/${encodeURIComponent(config.channelId)}/logout`;
+
+      overlayUrlEl.textContent = config.overlayUrl || "";
+      document.getElementById("screenUrl").textContent = config.screenUrl || "";
+      document.getElementById("designLink").href = config.designUrl || "#";
+
+      document.querySelectorAll("[data-copy]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const text = document.getElementById(button.dataset.copy).textContent;
+          navigator.clipboard.writeText(text).then(() => {
+            button.textContent = "Copied";
+            setTimeout(() => { button.textContent = "Copy"; }, 1200);
+          });
+        });
+      });
 
       // ---- WebSocket connection ---------------------------------------------
       let socket = null;
@@ -241,7 +292,7 @@
       // ---- Sending messages ------------------------------------------------
       function sendMessage(text) {
         if (socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(text);
+          socket.send(JSON.stringify({ type: "text", text: text }));
           console.log("[ws] Sent:", text);
         } else {
           console.warn("[ws] Cannot send — not connected");
@@ -421,7 +472,9 @@
       }
 
       // ---- Verse history ---------------------------------------------------
-      const HISTORY_KEY = "obsOverlayVerseHistory";
+      // Namespaced per channel: a shared A/V laptop may sign in to more than
+      // one church, and their recent-verse lists shouldn't mix.
+      const HISTORY_KEY = `obsOverlayVerseHistory:${config.channelId}`;
       const HISTORY_LIMIT = 30;
 
       function loadHistory() {

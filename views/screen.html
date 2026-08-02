@@ -5,6 +5,7 @@
   <meta http-equiv="x-ua-compatible" content="ie=edge" />
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
   <title>Presentation Screen</title>
+  <!--TP_CONFIG-->
 
   <!--
   ===========================================================================
@@ -21,15 +22,44 @@
   so whatever you type on the control page appears here instantly.
   -->
 
-  <!-- Lato + PT Sans Narrow fonts (matches the reference design) -->
+  <!--
+  APPEARANCE
+  ----------
+  Every visual property is driven by a CSS custom property that the channel's
+  theme sets at runtime (see public/theme-apply.js).  Edit the design at
+  /c/<channel>/design — changes arrive live over the WebSocket, so the
+  projector updates without a refresh.
+
+  The :root values below are the defaults, and are what the design page's
+  "Reset to default" restores.
+  -->
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
-    href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&family=PT+Sans+Narrow:wght@700&display=swap"
+    href="https://fonts.googleapis.com/css2?family=PT+Sans+Narrow:wght@400;700&display=swap"
     rel="stylesheet"
   />
+  <script src="/theme-apply.js"></script>
 
   <style>
+    /* ---- Theme variables (defaults = the original design) ---------------- */
+    :root {
+      --tp-screen-font: "PT Sans Narrow", sans-serif;
+      --tp-screen-size: 8vw;
+      --tp-screen-weight: 700;
+      --tp-screen-color: #ffffff;
+      --tp-screen-transform: uppercase;
+      --tp-screen-spacing: 0.25rem;
+      --tp-screen-line: 1.167;
+      --tp-screen-bg: #2b404e;
+      --tp-screen-pad: 64px;
+      --tp-screen-text-align: center;
+      --tp-screen-justify: center;
+      --tp-screen-align: center;
+      --tp-screen-fade: 500ms;
+    }
+
     /* ---- Reset & base ---------------------------------------------------- */
     *, *::before, *::after {
       box-sizing: border-box;
@@ -47,13 +77,14 @@
 
     body {
       margin: 0;
-      color: #fff;
+      color: var(--tp-screen-color);
       font-size: 1.125rem;
       font-weight: 400;
-      font-family: Lato, sans-serif;
+      font-family: var(--tp-screen-font);
       line-height: 1.5;
-      /* Solid dark navy background — fills the entire screen */
-      background-color: #2b404e;
+      /* Fills the entire screen; matches the container so no seam shows
+         during a resize. */
+      background-color: var(--tp-screen-bg);
     }
 
     /* ---- Full-screen centered container ------------------------------------
@@ -71,45 +102,37 @@
       flex-direction: column;
       -webkit-box-pack: center;
       -ms-flex-pack: center;
-      -webkit-justify-content: center;
-      justify-content: center;
-      -webkit-align-items: center;
+      -webkit-justify-content: var(--tp-screen-justify);
+      justify-content: var(--tp-screen-justify);
       -webkit-box-align: center;
       -ms-flex-align: center;
-      align-items: center;
-      text-align: center;
-      color: #fff;
-      background-color: #2b404e;
+      -webkit-align-items: var(--tp-screen-align);
+      align-items: var(--tp-screen-align);
+      text-align: var(--tp-screen-text-align);
+      color: var(--tp-screen-color);
+      background-color: var(--tp-screen-bg);
       position: absolute;
-      padding: 64px;
+      padding: var(--tp-screen-pad);
       top: 0;
       right: 0;
       bottom: 0;
       left: 0;
     }
 
-    /* ---- The display text --------------------------------------------------
-       |
-       |  Customizable properties:
-       |    font-family       — PT Sans Narrow is the default (condensed, bold).
-       |    font-size         — 8vw scales with viewport width.  Use a fixed
-       |                         value like "96px" if you prefer.
-       |    text-transform    — "uppercase" (default), "none", or "capitalize".
-       |    letter-spacing    — 0.25rem adds breathing room; set to 0 to tighten.
-       |    color             — white (#fff) by default.
-       |  ----------------------------------------------------------------- */
+    /* ---- The display text ------------------------------------------------ */
     .screen-text {
       margin: 0;
-      font-family: "PT Sans Narrow", sans-serif;
-      font-size: 8vw;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.25rem;
-      line-height: 1.167;
+      font-family: var(--tp-screen-font);
+      font-size: var(--tp-screen-size);
+      font-weight: var(--tp-screen-weight);
+      color: var(--tp-screen-color);
+      text-transform: var(--tp-screen-transform);
+      letter-spacing: var(--tp-screen-spacing);
+      line-height: var(--tp-screen-line);
       /* Fade in when text changes */
       opacity: 0;
-      -webkit-transition: opacity 0.5s ease-out;
-      transition: opacity 0.5s ease-out;
+      -webkit-transition: opacity var(--tp-screen-fade) ease-out;
+      transition: opacity var(--tp-screen-fade) ease-out;
     }
 
     .screen-text.visible {
@@ -145,8 +168,11 @@
   <script>
     (function () {
       // ---- Configuration ----------------------------------------------------
-      // Use wss:// on HTTPS deployments (Render/Railway) and ws:// on local http.
-      const SERVER_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+      // window.__TP__ is injected by the server and carries this page's view
+      // token, which scopes the connection to a single church's channel.
+      const config = window.__TP__ || {};
+      const SERVER_URL =
+        `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${config.wsUrl}`;
 
       // DOM elements
       const textEl = document.getElementById("screenText");
@@ -177,10 +203,24 @@
           reconnectDelay = 1000;
         });
 
+        // Text and theme updates share one socket, so a design change reaches
+        // the projector live without a refresh.
         socket.addEventListener("message", (event) => {
-          const rawText = event.data;
+          let message;
+          try {
+            message = JSON.parse(event.data);
+          } catch {
+            return; // Ignore anything that isn't a well-formed envelope
+          }
 
-          if (rawText === "") {
+          if (message.type === "theme") {
+            TPTheme.applyScreen(document.documentElement, message.theme.screen);
+            return;
+          }
+
+          if (message.type !== "text") return;
+
+          if (message.text === "") {
             // Empty string = clear the screen
             textEl.textContent = "";
             textEl.classList.remove("visible");
@@ -188,7 +228,7 @@
           }
 
           // Safely set text (textContent prevents HTML/JS injection)
-          textEl.textContent = rawText;
+          textEl.textContent = message.text;
 
           // Trigger fade-in
           // Force a reflow so the transition retriggers even if the

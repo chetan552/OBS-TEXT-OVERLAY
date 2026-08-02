@@ -1,0 +1,40 @@
+# =============================================================================
+# Cloudflare Tunnel — publishes the Mac mini without opening a router port
+# =============================================================================
+# cloudflared makes an outbound connection to Cloudflare's edge, which then
+# routes your hostname to it. Nothing listens on your public IP, so there is
+# no port forwarding, no dynamic DNS, and it works behind CGNAT. TLS is
+# terminated at the edge, so churches get HTTPS/WSS for free.
+#
+# Install and set up (one time):
+#
+#   brew install cloudflared
+#   cloudflared tunnel login                       # opens a browser
+#   cloudflared tunnel create textpresenter        # prints the tunnel UUID
+#   cloudflared tunnel route dns textpresenter text.example.org
+#
+#   mkdir -p ~/.cloudflared
+#   cp deploy/cloudflared-config.example.yml ~/.cloudflared/config.yml
+#   # edit the UUID and hostname below, then:
+#   sudo cloudflared service install
+#
+# Verify:
+#   cloudflared tunnel info textpresenter
+#   curl https://text.example.org/healthz
+
+# The UUID printed by `cloudflared tunnel create`.
+tunnel: 00000000-0000-0000-0000-000000000000
+credentials-file: /Users/chetanchadalavada/.cloudflared/00000000-0000-0000-0000-000000000000.json
+
+# WebSockets need no special flag — cloudflared proxies the Upgrade handshake.
+ingress:
+  - hostname: text.example.org
+    service: http://localhost:3000
+    originRequest:
+      # An OBS overlay holds an idle socket for the length of a service.
+      # Keep the origin connection alive well past that.
+      connectTimeout: 30s
+      noHappyEyeballs: true
+
+  # Required catch-all: anything not matched above gets a 404.
+  - service: http_status:404

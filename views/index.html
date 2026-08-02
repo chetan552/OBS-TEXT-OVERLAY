@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TextPresenter</title>
+  <link rel="stylesheet" href="/style.css" />
+  <!--TP_CONFIG-->
+</head>
+<body class="auth-page">
+  <div class="auth-card">
+    <h1>TextPresenter</h1>
+    <p class="auth-sub">
+      Live scripture and text overlays for OBS, projectors and second screens.
+    </p>
+    <p class="auth-hint">
+      Each church has its own private links. Open the control link your
+      administrator gave you — it looks like
+      <code>/c/your-church</code>.
+    </p>
+    <p class="auth-hint" id="adminLink" hidden>
+      <a href="/admin">Administrator sign in →</a>
+    </p>
+  </div>
+
+  <script>
+    (function () {
+      var config = window.__TP__ || {};
+      if (config.hasAdmin) document.getElementById("adminLink").hidden = false;
+    })();
+  </script>
+</body>
+</html>

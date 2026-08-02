@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in — TextPresenter</title>
+  <link rel="stylesheet" href="/style.css" />
+  <!--TP_CONFIG-->
+</head>
+<body class="auth-page">
+
+  <form class="auth-card" method="post" id="loginForm">
+    <h1 id="channelName">Sign in</h1>
+    <p class="auth-sub">Enter the password for this channel to open its control page.</p>
+
+    <p class="auth-error" id="error" hidden></p>
+
+    <label class="auth-label" for="password">Password</label>
+    <input
+      type="password"
+      id="password"
+      name="password"
+      class="text-input"
+      autocomplete="current-password"
+      required
+      autofocus
+    />
+
+    <button type="submit" class="btn btn-primary auth-submit">Sign in</button>
+
+    <p class="auth-hint">
+      Stays signed in on this device for 30 days. Ask your administrator if you
+      don't have the password.
+    </p>
+  </form>
+
+  <script>
+    (function () {
+      var config = window.__TP__ || {};
+      document.getElementById("loginForm").action =
+        "/c/" + encodeURIComponent(config.channelId) + "/login";
+
+      if (config.channelName) {
+        document.getElementById("channelName").textContent = config.channelName;
+        document.title = config.channelName + " — Sign in";
+      }
+
+      if (config.error) {
+        var errorEl = document.getElementById("error");
+        errorEl.textContent = config.error;
+        errorEl.hidden = false;
+      }
+    })();
+  </script>
+</body>
+</html>

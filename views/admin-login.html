@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin sign in — TextPresenter</title>
+  <link rel="stylesheet" href="/style.css" />
+  <!--TP_CONFIG-->
+</head>
+<body class="auth-page">
+
+  <form class="auth-card" method="post" action="/admin/login">
+    <h1>Administrator</h1>
+    <p class="auth-sub">Sign in to manage channels.</p>
+
+    <p class="auth-error" id="error" hidden></p>
+
+    <label class="auth-label" for="password">Admin password</label>
+    <input
+      type="password"
+      id="password"
+      name="password"
+      class="text-input"
+      autocomplete="current-password"
+      required
+      autofocus
+    />
+
+    <button type="submit" class="btn btn-primary auth-submit">Sign in</button>
+  </form>
+
+  <script>
+    (function () {
+      var config = window.__TP__ || {};
+      if (config.error) {
+        var errorEl = document.getElementById("error");
+        errorEl.textContent = config.error;
+        errorEl.hidden = false;
+      }
+    })();
+  </script>
+</body>
+</html>

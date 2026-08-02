@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ===========================================================================
+  TextPresenter launchd service (macOS)
+  ===========================================================================
+  A LaunchDaemon rather than a LaunchAgent: daemons start at boot and keep
+  running with nobody logged in, which is what you want on a Mac mini that
+  lives in a cupboard.
+
+  Install:
+    1. Edit the paths and env values below to match your machine.
+    2. sudo cp deploy/org.textpresenter.server.plist /Library/LaunchDaemons/
+    3. sudo chown root:wheel /Library/LaunchDaemons/org.textpresenter.server.plist
+    4. sudo chmod 644 /Library/LaunchDaemons/org.textpresenter.server.plist
+    5. sudo launchctl bootstrap system /Library/LaunchDaemons/org.textpresenter.server.plist
+
+  Restart after a code change:
+    sudo launchctl kickstart -k system/org.textpresenter.server
+
+  Stop and uninstall:
+    sudo launchctl bootout system/org.textpresenter.server
+
+  Logs:
+    tail -f /var/log/textpresenter.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>org.textpresenter.server</string>
+
+  <!-- Use the absolute path to node. Find yours with `which node`.
+       Homebrew on Apple silicon: /opt/homebrew/bin/node
+       Homebrew on Intel:         /usr/local/bin/node -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Users/Shared/textpresenter/server.js</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/Shared/textpresenter</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key>
+    <string>production</string>
+
+    <!-- The key to every church's channel. Change this. -->
+    <key>ADMIN_PASSWORD</key>
+    <string>change-me-to-something-long</string>
+
+    <!-- Your public hostname, so copy-paste links are correct behind the tunnel. -->
+    <key>PUBLIC_URL</key>
+    <string>https://text.example.org</string>
+
+    <key>ALLOWED_ORIGINS</key>
+    <string>https://text.example.org</string>
+
+    <!-- Keep true so your own church can connect over the LAN. -->
+    <key>ALLOW_PRIVATE_ORIGINS</key>
+    <string>true</string>
+
+    <key>PORT</key>
+    <string>3000</string>
+
+    <key>HOST</key>
+    <string>0.0.0.0</string>
+
+    <!-- Channel data and the session secret. Back this directory up. -->
+    <key>DATA_DIR</key>
+    <string>/Users/Shared/textpresenter-data</string>
+  </dict>
+
+  <!-- Start at boot and restart if the process ever exits. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Don't hammer restarts if it's crash-looping on a config error. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/var/log/textpresenter.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/var/log/textpresenter.log</string>
+
+  <!-- Run as a normal user, not root: the process only needs to read its own
+       directory and bind a high port. Change to your account's short name. -->
+  <key>UserName</key>
+  <string>chetanchadalavada</string>
+</dict>
+</plist>

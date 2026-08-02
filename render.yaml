@@ -1,14 +1,32 @@
-# Render Blueprint for the OBS Text Overlay WebSocket server.
+# Render Blueprint — cloud alternative to self-hosting on the Mac mini.
 # Deploy: Render dashboard → New + → Blueprint → connect this repo → Apply.
-# WebSockets work automatically over the service's HTTPS/WSS domain.
+#
+# The disk is not optional: channels.json and the session secret live in
+# DATA_DIR, and without a persistent disk every deploy would wipe every
+# church's channel and sign everyone out.
 services:
   - type: web
-    name: obs-text-overlay
+    name: textpresenter
     runtime: node
-    plan: free            # free tier spins down after ~15 min idle (cold start on next hit)
-    buildCommand: npm install
+    plan: starter # the free tier spins down when idle and has no persistent disk
+    buildCommand: npm install --omit=dev
     startCommand: npm start
-    healthCheckPath: /control.html
+    healthCheckPath: /healthz
+    disk:
+      name: textpresenter-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: NODE_VERSION
         value: "20"
+      - key: DATA_DIR
+        value: /var/data
+      # Set these in the dashboard, not here — this file is committed.
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: ALLOW_PRIVATE_ORIGINS
+        value: "false" # no LAN to serve in the cloud

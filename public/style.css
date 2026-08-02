@@ -13,8 +13,7 @@
 
 html, body {
   width: 100%;
-  height: 100%;
-  overflow: hidden;
+  min-height: 100%;
   font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
 }
 
@@ -25,6 +24,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 2rem 1rem;
   background: #1a1a2e;
   color: #e0e0e0;
 }
@@ -283,16 +283,330 @@ html, body {
   font-size: 0.8rem;
   color: #8888a0;
   line-height: 1.6;
+  text-align: left;
 }
 
-.hint code {
-  display: inline-block;
-  padding: 0.1em 0.4em;
+.hint-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.hint-title {
+  font-weight: 600;
+  color: #a0a0b8;
+}
+
+.hint-head .btn {
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.hint-note {
+  margin-top: 0.6rem;
+}
+
+/* ===========================================================================
+   SHARED — small buttons, copyable link rows
+   =========================================================================== */
+.btn-small {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+  border-radius: 6px;
+}
+
+/* Links styled as buttons (design page, control page) need the anchor
+   defaults stripped so they sit level with real buttons. */
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.btn-danger {
+  background: #6b2740;
+  color: #ffd7e0;
+}
+
+.btn-danger:hover {
+  background: #83304e;
+}
+
+/* A label, the URL, and a copy button. The URL is the wide part, so it gets
+   the flexible column and scrolls rather than wrapping mid-token.           */
+.link-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.4rem;
+}
+
+.link-label {
+  flex: 0 0 7.5rem;
+  color: #a0a0b8;
+  font-size: 0.8rem;
+}
+
+.link-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.35em 0.5em;
+  background: #0f3460;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  color: #a0c0f0;
+  white-space: nowrap;
+  overflow-x: auto;
+  user-select: all;
+}
+
+/* ===========================================================================
+   CONTROL PAGE — header row
+   =========================================================================== */
+/* The connection badge is absolutely positioned in the same top-right corner,
+   so the header starts below it rather than fighting it for space.          */
+.control-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.control-header h1 {
+  margin-bottom: 0;
+  text-align: left;
+}
+
+/* ===========================================================================
+   AUTH PAGES — channel login, admin login, landing, not found
+   =========================================================================== */
+.auth-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem 1rem;
+  background: #1a1a2e;
+  color: #e0e0e0;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 400px;
+  padding: 2.5rem 2rem;
+  background: #16213e;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.auth-card h1 {
+  font-size: 1.5rem;
+  color: #ffffff;
+  margin-bottom: 0.4rem;
+}
+
+.auth-sub {
+  font-size: 0.9rem;
+  color: #a0a0b8;
+  margin-bottom: 1.5rem;
+  line-height: 1.5;
+}
+
+.auth-label {
+  display: block;
+  font-size: 0.8rem;
+  color: #a0a0b8;
+  margin-bottom: 0.4rem;
+}
+
+.auth-submit {
+  width: 100%;
+  margin-top: 1rem;
+}
+
+.auth-error {
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 1rem;
+  background: #4a1f2e;
+  border-left: 3px solid #d05070;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: #ffc0d0;
+}
+
+.auth-hint {
+  margin-top: 1.25rem;
+  font-size: 0.78rem;
+  color: #8888a0;
+  line-height: 1.6;
+}
+
+.auth-hint a {
+  color: #6bbaff;
+}
+
+.auth-hint code {
+  padding: 0.1em 0.35em;
   background: #0f3460;
   border-radius: 3px;
-  font-size: 0.9em;
   color: #a0c0f0;
-  user-select: all;
+}
+
+/* ===========================================================================
+   ADMIN PAGE
+   =========================================================================== */
+.admin-page {
+  background: #1a1a2e;
+  color: #e0e0e0;
+  padding: 0 1rem 3rem;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 1.75rem 0 1.25rem;
+}
+
+.admin-header h1 {
+  font-size: 1.4rem;
+  color: #ffffff;
+}
+
+.admin-main {
+  max-width: 780px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* The design page pairs a control column with two 16:9 previews, which need
+   considerably more room than the channel list does. */
+.admin-header.is-wide,
+.admin-main.is-wide {
+  max-width: 1400px;
+}
+
+.admin-card {
+  padding: 1.5rem;
+  background: #16213e;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.admin-card h2 {
+  font-size: 1.05rem;
+  color: #ffffff;
+  margin-bottom: 1rem;
+}
+
+.admin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.admin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 100%;
+}
+
+.admin-field label {
+  font-size: 0.8rem;
+  color: #a0a0b8;
+}
+
+.admin-inline {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.admin-help {
+  font-size: 0.75rem;
+  color: #8888a0;
+}
+
+.admin-error {
+  padding: 0.6rem 0.8rem;
+  background: #4a1f2e;
+  border-left: 3px solid #d05070;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: #ffc0d0;
+}
+
+.admin-empty {
+  font-size: 0.85rem;
+  color: #8888a0;
+}
+
+.channel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.channel-card {
+  padding: 1.1rem;
+  background: #0f1b33;
+  border: 1px solid #253a5e;
+  border-radius: 10px;
+}
+
+/* A disabled channel is still listed, but visually stepped back so it's
+   obvious at a glance that nobody can connect to it.                        */
+.channel-card.is-disabled {
+  opacity: 0.55;
+}
+
+.channel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.channel-head h3 {
+  font-size: 1rem;
+  color: #ffffff;
+}
+
+.channel-meta {
+  font-size: 0.75rem;
+  color: #8888a0;
+  white-space: nowrap;
+}
+
+.channel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid #253a5e;
+}
+
+@media (max-width: 560px) {
+  .link-row {
+    flex-wrap: wrap;
+  }
+
+  .link-label {
+    flex-basis: 100%;
+  }
 }
 
 /* ===========================================================================

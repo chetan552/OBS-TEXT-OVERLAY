@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Channels — TextPresenter Admin</title>
+  <link rel="stylesheet" href="/style.css" />
+  <!--TP_CONFIG-->
+</head>
+<body class="admin-page">
+
+  <!--
+  ===========================================================================
+  ADMIN PANEL
+  ===========================================================================
+  Create a channel per church, then hand that church three links:
+
+    Control  /c/<id>          operator signs in with the channel password
+    Overlay  /v/<token>/…     OBS Browser Source (no login possible in OBS)
+    Screen   /v/<token>/…     projector / second monitor
+
+  The view token is the only credential the overlay and screen links carry,
+  so "Rotate links" is how you cut off a leaked URL.
+  -->
+
+  <header class="admin-header">
+    <h1>Channels</h1>
+    <form method="post" action="/admin/logout">
+      <button type="submit" class="btn btn-secondary btn-small">Sign out</button>
+    </form>
+  </header>
+
+  <main class="admin-main">
+
+    <!-- ---- Create a channel ------------------------------------------- -->
+    <section class="admin-card">
+      <h2>Add a church</h2>
+      <form id="createForm" class="admin-form">
+        <div class="admin-field">
+          <label for="newName">Church name</label>
+          <input type="text" id="newName" class="text-input" placeholder="Grace Fellowship" required />
+        </div>
+        <div class="admin-field">
+          <label for="newId">Channel id</label>
+          <input
+            type="text"
+            id="newId"
+            class="text-input"
+            placeholder="grace-fellowship"
+            pattern="[a-z0-9][a-z0-9-]{0,38}[a-z0-9]"
+            required
+          />
+          <span class="admin-help">Appears in the control URL. Lowercase letters, numbers, hyphens.</span>
+        </div>
+        <div class="admin-field">
+          <label for="newPassword">Operator password</label>
+          <div class="admin-inline">
+            <input type="text" id="newPassword" class="text-input" minlength="8" required />
+            <button type="button" class="btn btn-secondary btn-small" id="generatePassword">Generate</button>
+          </div>
+          <span class="admin-help">At least 8 characters. Shown once here — copy it before saving.</span>
+        </div>
+        <button type="submit" class="btn btn-primary">Create channel</button>
+        <p class="admin-error" id="createError" hidden></p>
+      </form>
+    </section>
+
+    <!-- ---- Existing channels ------------------------------------------ -->
+    <section class="admin-card">
+      <h2>Existing channels</h2>
+      <p class="admin-empty" id="empty" hidden>No channels yet.</p>
+      <div id="channelList" class="channel-list"></div>
+    </section>
+
+  </main>
+
+  <script>
+    (function () {
+      var listEl = document.getElementById("channelList");
+      var emptyEl = document.getElementById("empty");
+
+      // ---- API helpers ---------------------------------------------------
+      function api(method, url, body) {
+        return fetch(url, {
+          method: method,
+          headers: body ? { "Content-Type": "application/json" } : {},
+          body: body ? JSON.stringify(body) : undefined,
+        }).then(function (res) {
+          if (res.status === 401) {
+            location.reload(); // Session expired — bounce to the login page
+            throw new Error("Signed out");
+          }
+          return res.json().then(function (data) {
+            if (!res.ok) throw new Error(data.error || "Request failed");
+            return data;
+          });
+        });
+      }
+
+      // ---- Rendering ------------------------------------------------------
+      // Everything below builds DOM nodes and sets textContent rather than
+      // assembling HTML strings, so a church name can never inject markup.
+
+      function copyRow(label, url) {
+        var row = document.createElement("div");
+        row.className = "link-row";
+
+        var name = document.createElement("span");
+        name.className = "link-label";
+        name.textContent = label;
+
+        var value = document.createElement("code");
+        value.className = "link-value";
+        value.textContent = url;
+
+        var button = document.createElement("button");
+        button.className = "btn btn-secondary btn-small";
+        button.type = "button";
+        button.textContent = "Copy";
+        button.addEventListener("click", function () {
+          navigator.clipboard.writeText(url).then(function () {
+            button.textContent = "Copied";
+            setTimeout(function () { button.textContent = "Copy"; }, 1200);
+          });
+        });
+
+        row.appendChild(name);
+        row.appendChild(value);
+        row.appendChild(button);
+        return row;
+      }
+
+      function actionButton(label, className, handler) {
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn " + className + " btn-small";
+        button.textContent = label;
+        button.addEventListener("click", handler);
+        return button;
+      }
+
+      function renderChannel(channel) {
+        var card = document.createElement("article");
+        card.className = "channel-card" + (channel.disabled ? " is-disabled" : "");
+
+        var head = document.createElement("div");
+        head.className = "channel-head";
+
+        var title = document.createElement("h3");
+        title.textContent = channel.name;
+
+        var meta = document.createElement("span");
+        meta.className = "channel-meta";
+        meta.textContent =
+          channel.id +
+          " · " +
+          channel.connections +
+          (channel.connections === 1 ? " connection" : " connections") +
+          (channel.disabled ? " · disabled" : "");
+
+        head.appendChild(title);
+        head.appendChild(meta);
+        card.appendChild(head);
+
+        card.appendChild(copyRow("Control", channel.controlUrl));
+        card.appendChild(copyRow("Overlay (OBS)", channel.overlayUrl));
+        card.appendChild(copyRow("Screen", channel.screenUrl));
+
+        var actions = document.createElement("div");
+        actions.className = "channel-actions";
+
+        actions.appendChild(actionButton("Reset password", "btn-secondary", function () {
+          var next = prompt("New operator password for " + channel.name + " (min 8 characters):");
+          if (!next) return;
+          api("POST", "/admin/api/channels/" + channel.id + "/password", { password: next })
+            .then(function () { alert("Password updated. Give it to the church's operators."); })
+            .catch(function (err) { alert(err.message); });
+        }));
+
+        actions.appendChild(actionButton("Rotate links", "btn-secondary", function () {
+          if (!confirm(
+            "Rotate the overlay and screen links for " + channel.name + "?\n\n" +
+            "The current links stop working immediately and OBS will need the new URL."
+          )) return;
+          api("POST", "/admin/api/channels/" + channel.id + "/rotate-token").then(load);
+        }));
+
+        actions.appendChild(actionButton(
+          channel.disabled ? "Enable" : "Disable",
+          "btn-secondary",
+          function () {
+            api("POST", "/admin/api/channels/" + channel.id + "/disabled", {
+              disabled: !channel.disabled,
+            }).then(load);
+          }
+        ));
+
+        actions.appendChild(actionButton("Delete", "btn-danger", function () {
+          if (prompt('Type the channel id "' + channel.id + '" to delete it permanently:') !== channel.id) return;
+          api("DELETE", "/admin/api/channels/" + channel.id).then(load);
+        }));
+
+        card.appendChild(actions);
+        return card;
+      }
+
+      function load() {
+        return api("GET", "/admin/api/channels").then(function (data) {
+          listEl.textContent = "";
+          emptyEl.hidden = data.channels.length > 0;
+          data.channels.forEach(function (channel) {
+            listEl.appendChild(renderChannel(channel));
+          });
+        });
+      }
+
+      // ---- Create form ----------------------------------------------------
+      var nameEl = document.getElementById("newName");
+      var idEl = document.getElementById("newId");
+      var passwordEl = document.getElementById("newPassword");
+      var createError = document.getElementById("createError");
+      var idEdited = false;
+
+      idEl.addEventListener("input", function () { idEdited = true; });
+
+      // Suggest a slug from the church name until the admin types their own.
+      nameEl.addEventListener("input", function () {
+        if (idEdited) return;
+        idEl.value = nameEl.value
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 40);
+      });
+
+      document.getElementById("generatePassword").addEventListener("click", function () {
+        // Readable words beat random characters here: someone reads this
+        // aloud to a volunteer over the phone.
+        var words = ["anchor", "beacon", "cedar", "harbor", "lantern", "meadow",
+                     "quartz", "ridge", "summit", "willow", "amber", "cobalt"];
+        var pick = function () { return words[Math.floor(Math.random() * words.length)]; };
+        passwordEl.value = pick() + "-" + pick() + "-" + Math.floor(100 + Math.random() * 900);
+      });
+
+      document.getElementById("createForm").addEventListener("submit", function (event) {
+        event.preventDefault();
+        createError.hidden = true;
+        api("POST", "/admin/api/channels", {
+          id: idEl.value.trim().toLowerCase(),
+          name: nameEl.value.trim(),
+          password: passwordEl.value,
+        })
+          .then(function () {
+            nameEl.value = "";
+            idEl.value = "";
+            passwordEl.value = "";
+            idEdited = false;
+            return load();
+          })
+          .catch(function (err) {
+            createError.textContent = err.message;
+            createError.hidden = false;
+          });
+      });
+
+      // Refresh periodically so connection counts stay roughly live.
+      load();
+      setInterval(load, 15000);
+    })();
+  </script>
+</body>
+</html>

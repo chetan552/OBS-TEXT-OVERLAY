@@ -4,7 +4,9 @@
   "description": "A simple WebSocket-powered text overlay for OBS Studio",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "channel": "node scripts/channel.js",
+    "smoke": "node scripts/smoke-test.js"
   },
   "engines": {
     "node": ">=18"

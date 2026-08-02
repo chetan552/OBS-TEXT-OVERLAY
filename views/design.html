@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Design — TextPresenter</title>
+  <link rel="stylesheet" href="/style.css" />
+  <!--TP_CONFIG-->
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <script src="/theme-apply.js"></script>
+
+  <!--
+  ===========================================================================
+  DESIGN PAGE
+  ===========================================================================
+  Controls on the left, live preview on the right.
+
+  The preview is not an approximation: the two stages below are real
+  1920×1080 canvases carrying the same markup and the same CSS variables as
+  overlay.html and screen.html, scaled down with a transform. They are
+  styled by TPTheme from /theme-apply.js — the very code the real pages run —
+  so what appears here is what OBS and the projector will show.
+
+  Controls are generated from the field schema the server injects, so adding
+  a property in lib/theme.js makes a control appear here with no edit.
+  -->
+
+  <style>
+    /* ---- Preview stages -------------------------------------------------- */
+    /* Each stage is a true 1920×1080 box scaled to fit its column, so every
+       px value in the theme means on screen exactly what it means here.     */
+    .stage-frame {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      border-radius: 8px;
+      border: 1px solid #253a5e;
+    }
+
+    .stage {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 1920px;
+      height: 1080px;
+      transform-origin: top left;
+    }
+
+    /* A checkerboard behind the overlay stage, so transparency and light
+       bar colors are both readable. */
+    .stage-frame.is-transparent {
+      background-color: #2a2a3a;
+      background-image:
+        linear-gradient(45deg, #35354a 25%, transparent 25%),
+        linear-gradient(-45deg, #35354a 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #35354a 75%),
+        linear-gradient(-45deg, transparent 75%, #35354a 75%);
+      background-size: 24px 24px;
+      background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+    }
+
+    /* ---- Overlay preview (mirrors views/overlay.html) -------------------- */
+    .pv-overlay-wrapper {
+      position: absolute;
+      top: var(--tp-top);
+      bottom: var(--tp-bottom);
+      left: var(--tp-left);
+      right: var(--tp-right);
+      transform: translateY(var(--tp-translate-y));
+      max-width: var(--tp-bar-max-width);
+    }
+
+    [data-tp-side="right"] .pv-overlay-wrapper {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .pv-overlay-bar {
+      display: flex;
+      align-items: center;
+      width: max-content;
+      max-width: var(--tp-bar-max-width);
+      height: var(--tp-bar-height);
+      background: var(--tp-bar-color);
+      padding: 0 var(--tp-pad-right) 0 var(--tp-pad-left);
+      border-radius: var(--tp-radius);
+      white-space: nowrap;
+      clip-path: var(--tp-clip);
+    }
+
+    [data-tp-side="right"] .pv-overlay-bar {
+      padding: 0 var(--tp-pad-left) 0 var(--tp-pad-right);
+    }
+
+    .pv-overlay-text {
+      margin: 0;
+      font-size: var(--tp-font-size);
+      font-weight: var(--tp-font-weight);
+      font-family: var(--tp-font);
+      text-transform: var(--tp-text-transform);
+      letter-spacing: var(--tp-letter-spacing);
+      line-height: var(--tp-bar-height);
+      color: var(--tp-text-color);
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ---- Screen preview (mirrors views/screen.html) ---------------------- */
+    .pv-screen {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: var(--tp-screen-justify);
+      align-items: var(--tp-screen-align);
+      text-align: var(--tp-screen-text-align);
+      background-color: var(--tp-screen-bg);
+      padding: var(--tp-screen-pad);
+    }
+
+    /* The real page sizes text in vw against a 1920-wide viewport. The stage
+       is exactly 1920 wide, so 1vw here must mean 19.2px, not 1% of the
+       browser window — hence the calc rather than a vw unit. */
+    .pv-screen-text {
+      margin: 0;
+      font-family: var(--tp-screen-font);
+      font-size: calc(var(--tp-screen-size-num) * 19.2px);
+      font-weight: var(--tp-screen-weight);
+      color: var(--tp-screen-color);
+      text-transform: var(--tp-screen-transform);
+      letter-spacing: var(--tp-screen-spacing);
+      line-height: var(--tp-screen-line);
+    }
+
+    /* ---- Layout ---------------------------------------------------------- */
+    .design-layout {
+      display: grid;
+      grid-template-columns: minmax(300px, 380px) 1fr;
+      gap: 1.25rem;
+      align-items: start;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    @media (max-width: 900px) {
+      .design-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .design-preview {
+      position: sticky;
+      top: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .preview-card {
+      padding: 1rem;
+      background: #16213e;
+      border-radius: 12px;
+    }
+
+    .preview-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.7rem;
+    }
+
+    .preview-head h2 {
+      font-size: 0.95rem;
+      color: #ffffff;
+    }
+
+    .preview-note {
+      font-size: 0.72rem;
+      color: #8888a0;
+    }
+
+    /* ---- Tabs ------------------------------------------------------------ */
+    .tabs {
+      display: flex;
+      gap: 0.4rem;
+      margin-bottom: 1rem;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 0.5rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #a0a0b8;
+      background: #0f1b33;
+      border: 1px solid #253a5e;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .tab.active {
+      color: #0a0a1a;
+      background: #4da6ff;
+      border-color: #4da6ff;
+    }
+
+    /* ---- Field controls -------------------------------------------------- */
+    .field {
+      margin-bottom: 0.9rem;
+    }
+
+    .field-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.5rem;
+      margin-bottom: 0.3rem;
+    }
+
+    .field-label {
+      font-size: 0.8rem;
+      color: #a0a0b8;
+    }
+
+    .field-value {
+      font-size: 0.75rem;
+      color: #6bbaff;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .field input[type="range"] {
+      width: 100%;
+      accent-color: #4da6ff;
+    }
+
+    .field select {
+      width: 100%;
+      padding: 0.5rem;
+      font-size: 0.9rem;
+      font-family: inherit;
+      color: #ffffff;
+      background: #0f3460;
+      border: 1px solid #1a508b;
+      border-radius: 6px;
+    }
+
+    .field input[type="color"] {
+      width: 100%;
+      height: 2.2rem;
+      padding: 2px;
+      background: #0f3460;
+      border: 1px solid #1a508b;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .field-group {
+      margin-bottom: 1.25rem;
+    }
+
+    .field-group h3 {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #6c7a99;
+      margin-bottom: 0.7rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid #253a5e;
+    }
+
+    /* ---- Sticky action bar ----------------------------------------------- */
+    .design-actions {
+      position: sticky;
+      bottom: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      margin-top: 1rem;
+      padding: 0.9rem 0 0.5rem;
+      background: linear-gradient(to bottom, rgba(26, 26, 46, 0), #1a1a2e 35%);
+    }
+
+    .save-state {
+      font-size: 0.78rem;
+      color: #8888a0;
+      margin-left: auto;
+    }
+
+    .save-state.unsaved { color: #ffc46b; }
+    .save-state.saved   { color: #7ddb9a; }
+    .save-state.error   { color: #ff9aa9; }
+  </style>
+</head>
+<body class="admin-page">
+
+  <header class="admin-header is-wide">
+    <h1 id="pageTitle">Design</h1>
+    <a class="btn btn-secondary btn-small" id="backLink" href="#">Back to control</a>
+  </header>
+
+  <main class="admin-main is-wide">
+    <div class="design-layout">
+
+      <!-- ---- Controls ------------------------------------------------- -->
+      <section class="admin-card">
+        <div class="tabs">
+          <button type="button" class="tab active" data-section="overlay">Overlay (OBS)</button>
+          <button type="button" class="tab" data-section="screen">Screen</button>
+        </div>
+
+        <div id="controls"></div>
+
+        <div class="design-actions">
+          <button type="button" class="btn btn-primary btn-small" id="saveBtn">Save</button>
+          <button type="button" class="btn btn-secondary btn-small" id="resetSectionBtn">Reset this tab</button>
+          <button type="button" class="btn btn-danger btn-small" id="resetAllBtn">Reset all</button>
+          <span class="save-state" id="saveState"></span>
+        </div>
+      </section>
+
+      <!-- ---- Live preview --------------------------------------------- -->
+      <section class="design-preview">
+        <div class="preview-card">
+          <div class="preview-head">
+            <h2>Overlay (OBS)</h2>
+            <span class="preview-note">1920×1080, transparent background</span>
+          </div>
+          <div class="stage-frame is-transparent" id="overlayFrame">
+            <div class="stage" id="overlayStage">
+              <div class="pv-overlay-wrapper">
+                <div class="pv-overlay-bar">
+                  <h3 class="pv-overlay-text" id="overlaySample"></h3>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="preview-card">
+          <div class="preview-head">
+            <h2>Screen</h2>
+            <span class="preview-note">Projector / second monitor</span>
+          </div>
+          <div class="stage-frame" id="screenFrame">
+            <div class="stage" id="screenStage">
+              <div class="pv-screen">
+                <h1 class="pv-screen-text" id="screenSample"></h1>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="preview-card">
+          <div class="field">
+            <div class="field-head">
+              <span class="field-label">Preview text</span>
+            </div>
+            <input type="text" id="sampleText" class="text-input" value="John 3:16" />
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      var config = window.__TP__ || {};
+      var fields = config.fields;      // schema, injected by the server
+      var theme = config.theme;        // this channel's saved theme
+      var defaults = config.defaults;  // the original design
+
+      var activeSection = "overlay";
+      var dirty = false;
+
+      document.getElementById("pageTitle").textContent = config.channelName + " — Design";
+      document.title = config.channelName + " — Design";
+      document.getElementById("backLink").href = config.controlUrl;
+
+      // ---- Human labels for schema keys ---------------------------------
+      // The schema is the source of truth for types and ranges; this only
+      // supplies wording, so an unlabelled key still renders (title-cased).
+      var LABELS = {
+        fontFamily: "Font", fontSize: "Text size", fontWeight: "Weight",
+        textColor: "Text color", textTransform: "Capitalization",
+        letterSpacing: "Letter spacing", lineHeight: "Line height",
+        barColor: "Bar color", barOpacity: "Bar opacity", barHeight: "Bar height",
+        barMaxWidth: "Max bar width", paddingLeft: "Padding left",
+        paddingRight: "Padding right", angleWidth: "Angled edge",
+        cornerRadius: "Corner radius", side: "Anchor side",
+        vertical: "Vertical position", offsetX: "Horizontal offset",
+        offsetY: "Vertical offset", animation: "Animation",
+        animationMs: "Animation speed", backgroundColor: "Background",
+        padding: "Edge padding", align: "Horizontal align",
+        verticalAlign: "Vertical align", fadeMs: "Fade speed",
+      };
+
+      var GROUPS = {
+        overlay: [
+          { title: "Text", keys: ["fontFamily", "fontSize", "fontWeight", "textColor", "textTransform", "letterSpacing"] },
+          { title: "Bar", keys: ["barColor", "barOpacity", "barHeight", "barMaxWidth", "paddingLeft", "paddingRight", "angleWidth", "cornerRadius"] },
+          { title: "Placement", keys: ["side", "vertical", "offsetX", "offsetY"] },
+          { title: "Motion", keys: ["animation", "animationMs"] },
+        ],
+        screen: [
+          { title: "Text", keys: ["fontFamily", "fontSize", "fontWeight", "textColor", "textTransform", "letterSpacing", "lineHeight"] },
+          { title: "Page", keys: ["backgroundColor", "padding", "align", "verticalAlign"] },
+          { title: "Motion", keys: ["fadeMs"] },
+        ],
+      };
+
+      var ENUM_LABELS = {
+        "300": "Light", "400": "Regular", "700": "Bold",
+        none: "None", uppercase: "UPPERCASE", capitalize: "Capitalized",
+        left: "Left", right: "Right", center: "Center",
+        top: "Top", bottom: "Bottom",
+        slide: "Slide in", fade: "Fade in",
+      };
+
+      function labelFor(key) {
+        if (LABELS[key]) return LABELS[key];
+        return key.replace(/([A-Z])/g, " $1").replace(/^./, function (c) { return c.toUpperCase(); });
+      }
+
+      // ---- Control rendering ---------------------------------------------
+      function el(tag, className, text) {
+        var node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      }
+
+      function renderField(section, key) {
+        var spec = fields[section][key];
+        if (!spec) return null;
+
+        var wrap = el("div", "field");
+        var head = el("div", "field-head");
+        head.appendChild(el("span", "field-label", labelFor(key)));
+
+        var readout = el("span", "field-value");
+        head.appendChild(readout);
+        wrap.appendChild(head);
+
+        var input;
+
+        if (spec.type === "number") {
+          input = document.createElement("input");
+          input.type = "range";
+          input.min = spec.min;
+          input.max = spec.max;
+          input.step = spec.step || 1;
+          input.value = theme[section][key];
+          readout.textContent = input.value + (spec.unit || "");
+
+          input.addEventListener("input", function () {
+            theme[section][key] = parseFloat(input.value);
+            readout.textContent = input.value + (spec.unit || "");
+            onChange();
+          });
+        } else if (spec.type === "color") {
+          input = document.createElement("input");
+          input.type = "color";
+          input.value = theme[section][key];
+          readout.textContent = input.value;
+
+          input.addEventListener("input", function () {
+            theme[section][key] = input.value;
+            readout.textContent = input.value;
+            onChange();
+          });
+        } else {
+          // enum and font both render as a <select>
+          input = document.createElement("select");
+          var options = spec.type === "font"
+            ? config.fonts.map(function (f) { return { value: f.id, label: f.label }; })
+            : spec.values.map(function (v) { return { value: v, label: ENUM_LABELS[v] || v }; });
+
+          options.forEach(function (opt) {
+            var option = document.createElement("option");
+            option.value = opt.value;
+            option.textContent = opt.label;
+            input.appendChild(option);
+          });
+          input.value = theme[section][key];
+
+          input.addEventListener("change", function () {
+            theme[section][key] = input.value;
+            onChange();
+          });
+        }
+
+        wrap.appendChild(input);
+        return wrap;
+      }
+
+      function renderControls() {
+        var host = document.getElementById("controls");
+        host.textContent = "";
+
+        GROUPS[activeSection].forEach(function (group) {
+          var section = el("div", "field-group");
+          section.appendChild(el("h3", null, group.title));
+          group.keys.forEach(function (key) {
+            var field = renderField(activeSection, key);
+            if (field) section.appendChild(field);
+          });
+          host.appendChild(section);
+        });
+      }
+
+      // ---- Preview --------------------------------------------------------
+      var overlayStage = document.getElementById("overlayStage");
+      var screenStage = document.getElementById("screenStage");
+
+      function applyPreview() {
+        // Scoped to the stage rather than :root so the two previews can't
+        // fight each other, and so the design page's own chrome is untouched.
+        TPTheme.applyOverlay(overlayStage, theme.overlay);
+        TPTheme.applyScreen(screenStage, theme.screen);
+
+        // applyOverlay sets data attributes on the element it styles; the
+        // preview CSS keys off the same attributes.
+        screenStage.style.setProperty("--tp-screen-size-num", theme.screen.fontSize);
+
+        var text = document.getElementById("sampleText").value || "John 3:16";
+        document.getElementById("overlaySample").textContent = text;
+        document.getElementById("screenSample").textContent = text;
+      }
+
+      /** Scale each 1920×1080 stage to fit the width of its frame. */
+      function fitStages() {
+        [["overlayFrame", overlayStage], ["screenFrame", screenStage]].forEach(function (pair) {
+          var frame = document.getElementById(pair[0]);
+          var scale = frame.clientWidth / 1920;
+          pair[1].style.transform = "scale(" + scale + ")";
+        });
+      }
+
+      window.addEventListener("resize", fitStages);
+      document.getElementById("sampleText").addEventListener("input", applyPreview);
+
+      // ---- Save -----------------------------------------------------------
+      var stateEl = document.getElementById("saveState");
+
+      function setState(text, cls) {
+        stateEl.textContent = text;
+        stateEl.className = "save-state " + (cls || "");
+      }
+
+      function onChange() {
+        dirty = true;
+        setState("Unsaved changes", "unsaved");
+        applyPreview();
+      }
+
+      function save() {
+        setState("Saving…", "");
+        return fetch("/c/" + encodeURIComponent(config.channelId) + "/api/theme", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(theme),
+        })
+          .then(function (res) {
+            if (res.status === 401) { location.href = config.controlUrl; throw new Error("Signed out"); }
+            if (!res.ok) throw new Error("Save failed");
+            return res.json();
+          })
+          .then(function (data) {
+            // Adopt the server's sanitized copy — it is the authority on
+            // what was actually stored.
+            theme = data.theme;
+            dirty = false;
+            renderControls();
+            applyPreview();
+            setState("Saved — live on OBS and the projector", "saved");
+          })
+          .catch(function (err) {
+            setState(err.message, "error");
+          });
+      }
+
+      function reset(scope) {
+        var message = scope === "all"
+          ? "Reset both the overlay and the screen to the original design?"
+          : "Reset the " + activeSection + " to the original design?";
+        if (!confirm(message)) return;
+
+        if (scope === "all") {
+          // Server-side reset is authoritative and clears both sections.
+          fetch("/c/" + encodeURIComponent(config.channelId) + "/api/theme/reset", { method: "POST" })
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+              theme = data.theme;
+              dirty = false;
+              renderControls();
+              applyPreview();
+              setState("Reset to the original design", "saved");
+            });
+          return;
+        }
+
+        // Single tab: restore that section locally, then save so the change
+        // is persisted and pushed live like any other edit.
+        theme[activeSection] = JSON.parse(JSON.stringify(defaults[activeSection]));
+        renderControls();
+        applyPreview();
+        save();
+      }
+
+      document.getElementById("saveBtn").addEventListener("click", save);
+      document.getElementById("resetSectionBtn").addEventListener("click", function () { reset("section"); });
+      document.getElementById("resetAllBtn").addEventListener("click", function () { reset("all"); });
+
+      // Ctrl/Cmd+S is the reflex for anyone who has used a design tool.
+      document.addEventListener("keydown", function (event) {
+        if ((event.metaKey || event.ctrlKey) && event.key === "s") {
+          event.preventDefault();
+          save();
+        }
+      });
+
+      window.addEventListener("beforeunload", function (event) {
+        if (!dirty) return;
+        event.preventDefault();
+        event.returnValue = "";
+      });
+
+      // ---- Tabs ------------------------------------------------------------
+      Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (tab) {
+        tab.addEventListener("click", function () {
+          document.querySelector(".tab.active").classList.remove("active");
+          tab.classList.add("active");
+          activeSection = tab.dataset.section;
+          renderControls();
+        });
+      });
+
+      // ---- Go ---------------------------------------------------------------
+      renderControls();
+      applyPreview();
+      fitStages();
+      setState("", "");
+
+      // Fonts load asynchronously; re-fit once they settle so a metric change
+      // doesn't leave the preview mis-scaled.
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitStages);
+    })();
+  </script>
+</body>
+</html>
