@@ -1,0 +1,32 @@
+# =============================================================================
+# TextPresenter — Docker Compose
+# =============================================================================
+# Compose reads the same .env file the app uses (for ${VAR} substitution) and
+# passes the values through to the container. Secrets stay out of the image.
+
+services:
+  textpresenter:
+    build: .
+    image: textpresenter
+    restart: unless-stopped
+    init: true
+    ports:
+      # Host port on the left, container port on the right.
+      - "${PORT:-3000}:${PORT:-3000}"
+    environment:
+      PORT: ${PORT:-3000}
+      # Always 0.0.0.0 inside the container: a HOST=127.0.0.1 from a .env
+      # written for the tunnel-only Mac mini setup would make the published
+      # port unreachable, so .env is deliberately ignored here.
+      HOST: 0.0.0.0
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      ALLOW_PRIVATE_ORIGINS: ${ALLOW_PRIVATE_ORIGINS:-true}
+      DATA_DIR: /data
+    volumes:
+      # channels.json + the session signing secret — survives rebuilds
+      - textpresenter-data:/data
+
+volumes:
+  textpresenter-data:

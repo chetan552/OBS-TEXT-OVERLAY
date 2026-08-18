@@ -63,6 +63,39 @@ If a setting doesn't seem to apply, check that line first. **Real environment va
 ADMIN_PASSWORD=some-long-admin-password npm start
 ```
 
+## Quick start (Docker)
+
+No Node required on the host — Docker and Docker Compose are enough.
+
+```bash
+cp .env.example .env
+$EDITOR .env   # at minimum, set ADMIN_PASSWORD
+
+docker compose up -d --build
+```
+
+Then open `http://localhost:3000/admin`. Compose reads the same `.env` for
+both port mapping and container configuration, and keeps channel data in a
+named volume (`textpresenter-data`) so it survives container rebuilds.
+
+| Task | Command |
+|------|---------|
+| Follow the logs (startup banner included) | `docker compose logs -f` |
+| Manage channels from the CLI | `docker compose exec textpresenter npm run channel -- list` |
+| Check it's alive | `curl http://localhost:3000/healthz` |
+| Stop | `docker compose down` |
+| Stop and wipe the channel data | `docker compose down -v` |
+
+Two container-specific notes:
+
+- **`HOST` is pinned to `0.0.0.0` in `docker-compose.yml`** and the value in
+  `.env` is ignored. Inside a container, `HOST=127.0.0.1` (the tunnel-only
+  setting) would make the published port unreachable.
+- **Bind mounts instead of the named volume:** replace
+  `textpresenter-data:/data` with `./data:/data` and run
+  `mkdir -p data && chown 1000:1000 data` first — the app runs as uid 1000
+  inside the container and can't write a host-owned directory.
+
 ---
 
 # Hosting for multiple churches

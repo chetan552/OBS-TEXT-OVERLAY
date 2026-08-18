@@ -1,0 +1,31 @@
+# Dependencies — rebuilt inside the image
+node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Environment — secrets stay out of the image; supply them at runtime
+.env
+.env.*
+!.env.example
+
+# Local channel data — the container gets its own copy via the /data volume
+data/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Mac-mini deployment files
+deploy/
+
+# OS / editor noise
+.DS_Store
+.DS_Store?
+._*
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
