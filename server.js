@@ -33,8 +33,10 @@ const loadedFromEnvFile = require("./lib/env").loadEnv();
 
 const store = require("./lib/store");
 const theme = require("./lib/theme");
+const loginGuard = require("./lib/login-guard");
+const requests = require("./lib/requests");
 const {
-  verifyPassword,
+  verifyPasswordAsync,
   signSession,
   verifySession,
   parseCookies,
@@ -49,6 +51,11 @@ const SESSION_MAX_AGE = 30 * 24 * 60 * 60; // 30 days, in seconds
 const ADMIN_SESSION_MAX_AGE = 12 * 60 * 60; // 12 hours
 const MESSAGE_COOLDOWN_MS = 150; // per channel, not per server
 const HEARTBEAT_MS = 30_000;
+// A church needs OBS + projector + control, so real usage is under a dozen.
+// These caps are a backstop against a leaked view token flooding the server
+// with sockets — every socket costs memory and a copy of each broadcast.
+const MAX_SOCKETS_PER_CHANNEL = 300;
+const MAX_TOTAL_SOCKETS = 2000;
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
@@ -67,6 +74,7 @@ const ALLOW_PRIVATE_ORIGINS = process.env.ALLOW_PRIVATE_ORIGINS !== "false";
 
 // ---- Load persistent state --------------------------------------------------
 store.load();
+requests.load();
 const SESSION_SECRET = store.loadOrCreateSessionSecret();
 
 if (!ADMIN_PASSWORD) {
@@ -134,6 +142,22 @@ app.use((req, res, next) => {
       "connect-src 'self' ws: wss:; " +
       "frame-ancestors 'self'"
   );
+  if (isSecureRequest(req)) {
+    // Browsers only honor HSTS over HTTPS, so only advertise it there — a
+    // LAN-only http deployment must never learn a policy it can't satisfy.
+    res.setHeader("Strict-Transport-Security", "max-age=31536000");
+  }
+  next();
+});
+
+// absoluteUrl() builds copy-paste links from the Host header when PUBLIC_URL
+// is unset, so a malformed Host must never reach the link builders.
+const HOST_PATTERN = /^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(:\d{1,5})?$/;
+app.use((req, res, next) => {
+  const host = req.get("host");
+  if (host && !HOST_PATTERN.test(host)) {
+    return res.status(400).type("text").send("Bad Request");
+  }
   next();
 });
 
@@ -199,11 +223,46 @@ function loginDelay() {
 // =============================================================================
 
 app.get("/", (req, res) => {
-  sendView(res, "index", { hasAdmin: Boolean(ADMIN_PASSWORD) });
+  // No admin link on purpose: the panel is deliberately unadvertised, and
+  // the administrator knows where it lives.
+  sendView(res, "index", {});
 });
 
 app.get("/healthz", (req, res) => {
   res.json({ ok: true, channels: store.listChannels().length });
+});
+
+// ---- Account requests ---------------------------------------------------------
+// Public form on the home page. Rate-limited per IP, a honeypot for bots,
+// and every field is sanitized before it lands in requests.json.
+
+app.post("/api/request", (req, res) => {
+  const body = req.body || {};
+
+  // Honeypot: hidden from humans, filled by bots. Pretend success.
+  if (body.website) return res.json({ ok: true });
+
+  if (requests.throttle(clientIp(req))) {
+    return res.status(429).json({ error: "Too many requests — please try again in an hour." });
+  }
+
+  const churchName = requests.cleanField(body.churchName, 100);
+  const email = requests.cleanField(body.email, 200);
+  if (churchName.length < 2) {
+    return res.status(400).json({ error: "Please tell us your church's name." });
+  }
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return res.status(400).json({ error: "That email address doesn't look right." });
+  }
+
+  requests.submit({
+    churchName,
+    contactName: requests.cleanField(body.contactName, 100),
+    email,
+    notes: requests.cleanField(body.notes, 1000),
+  });
+  console.log(`[request] Account request from "${churchName}" (${clientIp(req)})`);
+  res.status(201).json({ ok: true });
 });
 
 // =============================================================================
@@ -306,15 +365,41 @@ app.post("/c/:channelId/login", async (req, res) => {
     return res.status(404).type("html").send(renderView("not-found", {}));
   }
 
-  const password = typeof req.body.password === "string" ? req.body.password : "";
-  if (!verifyPassword(password, channel.passwordHash)) {
+  const ip = clientIp(req);
+  const target = `channel:${channelId}`;
+  const guard = loginGuard.check(ip, target);
+  if (guard.blocked) {
+    return res
+      .status(429)
+      .type("text")
+      .send(
+        `Too many failed attempts — try again in about ${Math.max(1, Math.ceil(guard.retryAfterSec / 60))} minutes.`
+      );
+  }
+
+  // scrypt is async but CPU-bound; the gate stops a flood of attempts from
+  // pinning the event loop with parallel hashes.
+  if (!(await loginGuard.acquireGate())) {
+    return res.status(503).type("text").send("Server busy — please try again in a moment.");
+  }
+  let passwordOk;
+  try {
+    const password = req.body && typeof req.body.password === "string" ? req.body.password : "";
+    passwordOk = await verifyPasswordAsync(password, channel.passwordHash);
+  } finally {
+    loginGuard.releaseGate();
+  }
+
+  if (!passwordOk) {
+    loginGuard.recordFailure(ip, target);
     await loginDelay();
-    console.log(`[auth] Failed control login for "${channelId}" from ${clientIp(req)}`);
+    console.log(`[auth] Failed control login for "${channelId}" from ${ip}`);
     return res.redirect(`/c/${encodeURIComponent(channelId)}?error=1`);
   }
 
+  loginGuard.recordSuccess(ip, target);
   setSession(res, req, controlCookieName(channelId), { channel: channelId }, SESSION_MAX_AGE);
-  console.log(`[auth] Control login for "${channelId}" from ${clientIp(req)}`);
+  console.log(`[auth] Control login for "${channelId}" from ${ip}`);
   res.redirect(`/c/${encodeURIComponent(channelId)}`);
 });
 
@@ -378,17 +463,30 @@ app.post("/admin/login", async (req, res) => {
     return res.status(503).type("text").send("Admin panel disabled: ADMIN_PASSWORD is not set.");
   }
 
-  const password = typeof req.body.password === "string" ? req.body.password : "";
+  const ip = clientIp(req);
+  const guard = loginGuard.check(ip, "admin");
+  if (guard.blocked) {
+    return res
+      .status(429)
+      .type("text")
+      .send(
+        `Too many failed attempts — try again in about ${Math.max(1, Math.ceil(guard.retryAfterSec / 60))} minutes.`
+      );
+  }
+
+  const password = req.body && typeof req.body.password === "string" ? req.body.password : "";
   // Compare through the same constant-time path used for channel passwords by
   // padding both sides to equal length via HMAC-free comparison.
   if (!safeEqual(password, ADMIN_PASSWORD)) {
+    loginGuard.recordFailure(ip, "admin");
     await loginDelay();
-    console.log(`[auth] Failed admin login from ${clientIp(req)}`);
+    console.log(`[auth] Failed admin login from ${ip}`);
     return res.redirect("/admin?error=1");
   }
 
+  loginGuard.recordSuccess(ip, "admin");
   setSession(res, req, "tp_admin", { role: "admin" }, ADMIN_SESSION_MAX_AGE);
-  console.log(`[auth] Admin login from ${clientIp(req)}`);
+  console.log(`[auth] Admin login from ${ip}`);
   res.redirect("/admin");
 });
 
@@ -462,6 +560,33 @@ app.delete("/admin/api/channels/:id", requireAdmin, (req, res) => {
     console.log(`[admin] Deleted channel "${req.params.id}"`);
     res.json({ ok: true });
   });
+});
+
+// ---- Account requests --------------------------------------------------------
+
+app.get("/admin/api/requests", requireAdmin, (req, res) => {
+  res.json({ requests: requests.list() });
+});
+
+app.post("/admin/api/requests/:id/approve", requireAdmin, (req, res) => {
+  try {
+    const { request, channel, password } = requests.approve(req.params.id);
+    console.log(`[admin] Approved request from "${request.churchName}" → channel "${channel.id}"`);
+    // The password is returned exactly once; nothing is stored.
+    res.json({ request, channel: decorate(req, channel), password });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/admin/api/requests/:id/dismiss", requireAdmin, (req, res) => {
+  try {
+    const request = requests.dismiss(req.params.id);
+    console.log(`[admin] Dismissed request from "${request.churchName}"`);
+    res.json({ request });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 function withChannel(req, res, fn) {
@@ -640,6 +765,16 @@ server.on("upgrade", (req, socket, head) => {
     return rejectUpgrade(socket, 401, "Unauthorized");
   }
 
+  // Caps are checked here, before the handshake completes, so a flood of
+  // connections is refused cheaply instead of being carried and dropped.
+  if (wss.clients.size >= MAX_TOTAL_SOCKETS) {
+    return rejectUpgrade(socket, 503, "Server at capacity");
+  }
+  const room = getRoom(channel.id);
+  if (room.sockets.size >= MAX_SOCKETS_PER_CHANNEL) {
+    return rejectUpgrade(socket, 503, "Channel at capacity");
+  }
+
   wss.handleUpgrade(req, socket, head, (ws) => {
     ws.tpChannelId = channel.id;
     ws.tpRole = role;
@@ -752,6 +887,9 @@ store.watch((count) => {
   }
 });
 
+loginGuard.startCleanup();
+requests.startCleanup();
+
 // =============================================================================
 // Start
 // =============================================================================
@@ -778,6 +916,20 @@ server.listen(PORT, HOST, () => {
   if (channels.length === 0) {
     console.log('    (none yet — add one in the admin panel, or:');
     console.log('     npm run channel -- add my-church "My Church")');
+  }
+  if (ALLOWED_ORIGINS.length === 0 && !PUBLIC_URL) {
+    console.warn(
+      "[security] ALLOWED_ORIGINS and PUBLIC_URL are both unset — any WebSocket\n" +
+        "           origin is accepted (dev mode). Set them before going public:\n" +
+        "           ALLOWED_ORIGINS=https://your-host"
+    );
+  }
+  if (!PUBLIC_URL) {
+    console.warn(
+      "[security] PUBLIC_URL is not set — copy-paste links are built from the\n" +
+        "           request's Host header, which a client can spoof. Set it for\n" +
+        "           production so churches always get the real hostname."
+    );
   }
   console.log("");
 });

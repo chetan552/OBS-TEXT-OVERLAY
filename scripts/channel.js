@@ -23,20 +23,13 @@ require("../lib/env").loadEnv();
 
 const store = require("../lib/store");
 const { randomToken } = require("../lib/auth");
+const { suggestPassword } = require("../lib/password");
 
 const BASE = (process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/+$/, "");
 
 store.load();
 
 const [command, ...args] = process.argv.slice(2);
-
-/** Readable, phone-friendly password — these get dictated to volunteers. */
-function suggestPassword() {
-  const words = ["anchor", "beacon", "cedar", "harbor", "lantern", "meadow",
-                 "quartz", "ridge", "summit", "willow", "amber", "cobalt"];
-  const pick = () => words[Math.floor(Math.random() * words.length)];
-  return `${pick()}-${pick()}-${100 + Math.floor(Math.random() * 900)}`;
-}
 
 function printChannel(channel, password) {
   console.log("");

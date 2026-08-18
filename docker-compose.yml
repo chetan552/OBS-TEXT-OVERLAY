@@ -11,8 +11,11 @@ services:
     restart: unless-stopped
     init: true
     ports:
-      # Host port on the left, container port on the right.
-      - "${PORT:-3000}:${PORT:-3000}"
+      # Host port on the left, container port on the right. Bound to loopback
+      # by default, so the app is reachable only through a tunnel on the host
+      # (or from the host itself). Set BIND_HOST=0.0.0.0 in .env only if
+      # churches must reach the server directly over the LAN.
+      - "${BIND_HOST:-127.0.0.1}:${PORT:-3000}:${PORT:-3000}"
     environment:
       PORT: ${PORT:-3000}
       # Always 0.0.0.0 inside the container: a HOST=127.0.0.1 from a .env

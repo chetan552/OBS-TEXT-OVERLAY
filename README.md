@@ -5,7 +5,7 @@ Real-time scripture and text overlays for **OBS Studio**, projectors and second 
 One server hosts **many churches**. Each gets its own channel, its own password, and its own private links — and never sees another church's text.
 
 ```
- Grace Fellowship                                    Hope Chapel
+ Christian Fellowship Church                                    Hope Chapel
  ────────────────                                    ───────────
  control page ──┐                              ┌── control page
                 │                              │
@@ -86,11 +86,15 @@ named volume (`textpresenter-data`) so it survives container rebuilds.
 | Stop | `docker compose down` |
 | Stop and wipe the channel data | `docker compose down -v` |
 
-Two container-specific notes:
+Three container-specific notes:
 
 - **`HOST` is pinned to `0.0.0.0` in `docker-compose.yml`** and the value in
   `.env` is ignored. Inside a container, `HOST=127.0.0.1` (the tunnel-only
   setting) would make the published port unreachable.
+- **The published port binds to `127.0.0.1` by default**, so the app is only
+  reachable from the host itself (e.g. via a Cloudflare Tunnel running on the
+  host). Set `BIND_HOST=0.0.0.0` in `.env` only if churches must connect
+  directly over the LAN.
 - **Bind mounts instead of the named volume:** replace
   `textpresenter-data:/data` with `./data:/data` and run
   `mkdir -p data && chown 1000:1000 data` first — the app runs as uid 1000
@@ -179,6 +183,7 @@ ALLOW_PRIVATE_ORIGINS=true
 
 From there you can:
 
+- **Approve account requests** — churches can ask for access on the home page (`/`). Approving creates their channel on the spot and shows a generated password to relay once; it isn't stored, so copy it before closing the panel (or just set a new one later with Reset password). Dismissing files the request as resolved.
 - **Add a church** — name, channel id, operator password. The panel generates a readable password (`cedar-harbor-418`) since someone usually reads it aloud to a volunteer.
 - **Copy the three links** to send to that church.
 - **Reset password** — for when a volunteer moves on. Existing signed-in sessions keep working, so this never interrupts a live service.
@@ -188,18 +193,20 @@ From there you can:
 
 The panel also shows live connection counts per channel, so you can see who's actually on air.
 
+The home page is the public face of the server: what the app does, an account request form, and a "Church login" box where operators type their channel code to reach `/c/<id>`. It deliberately carries no admin link — the panel lives only at `/admin`.
+
 ## The CLI
 
 For bootstrapping over SSH, scripting onboarding, or recovering a lost `ADMIN_PASSWORD`:
 
 ```bash
 npm run channel -- list
-npm run channel -- add grace-fellowship "Grace Fellowship" [password]
-npm run channel -- password grace-fellowship [password]
-npm run channel -- rotate grace-fellowship
-npm run channel -- disable grace-fellowship
-npm run channel -- enable grace-fellowship
-npm run channel -- remove grace-fellowship
+npm run channel -- add christian-fellowship-church "Christian Fellowship Church" [password]
+npm run channel -- password christian-fellowship-church [password]
+npm run channel -- rotate christian-fellowship-church
+npm run channel -- disable christian-fellowship-church
+npm run channel -- enable christian-fellowship-church
+npm run channel -- remove christian-fellowship-church
 ```
 
 A running server watches `channels.json` and picks up CLI changes within a couple of seconds — no restart needed.
@@ -277,7 +284,7 @@ See `.env.example`.
 
 **Operator credentials never touch client JS.** The session cookie is `HttpOnly` and rides along on the same-origin WebSocket handshake automatically.
 
-**Passwords** are scrypt-hashed with a per-password salt (N=16384) and compared in constant time. Failed logins pause ~400 ms.
+**Passwords** are scrypt-hashed with a per-password salt (N=16384) and compared in constant time — asynchronously on the login routes, so a flood of attempts can't block the event loop, and behind a gate that refuses (503) rather than queue past a few concurrent verifications. Failed logins pause ~400 ms and count toward a 15-minute lockout: 5 failures per IP (or 20 for the same channel from any IP, which is the backstop when everything arrives through one gateway) and the target returns 429 until the window passes. Generated operator passwords are 4 words + 3 digits (~35 bits) precisely so a leaked `channels.json` can't be cracked offline.
 
 **Sessions** are stateless HMAC-SHA256 tokens with an embedded expiry — 30 days for operators, 12 hours for admin.
 
@@ -285,7 +292,7 @@ See `.env.example`.
 
 **Themes are validated, not filtered.** A saved theme becomes CSS custom properties, so `lib/theme.js` treats it as untrusted input against a whitelist: unknown keys are dropped, colors must match `#rrggbb`, fonts and enums must be members of a fixed list, and numbers are clamped to a range. Nothing a user types can reach a page as arbitrary CSS. The smoke test asserts this with hostile input.
 
-**Other.** 64 KiB message cap enforced at the protocol level; origin validation on upgrade; 30-second heartbeat that terminates unresponsive sockets; `nosniff`, `X-Frame-Options`, `Referrer-Policy` and a CSP on every response; all client pages render text with `textContent`, never `innerHTML`.
+**Other.** 64 KiB message cap enforced at the protocol level; origin validation on upgrade; socket caps (300 per channel, 2000 total) so a leaked view token can't flood the server with connections; 30-second heartbeat that terminates unresponsive sockets; `nosniff`, `X-Frame-Options`, `Referrer-Policy`, a CSP on every response, and HSTS on HTTPS responses; malformed `Host` headers are rejected (the header feeds copy-paste links when `PUBLIC_URL` is unset); the public account-request endpoint is throttled (3 per hour per IP), has a honeypot field, and sanitizes every input before storing; approved requests never write a password to disk; all client pages render text with `textContent`, never `innerHTML`.
 
 Run `npm run smoke` to verify the isolation properties — it boots a real server, creates two channels, and asserts that text doesn't cross between them, that view sockets can't broadcast, and that unauthenticated sockets are refused.
 
@@ -298,6 +305,9 @@ Run `npm run smoke` to verify the isolation properties — it boots a real serve
 | `server.js` | Express + WebSocket server, routing, channel rooms |
 | `lib/store.js` | Channel persistence (`channels.json`) |
 | `lib/auth.js` | scrypt hashing, signed session cookies |
+| `lib/login-guard.js` | Failed-login lockout, scrypt concurrency gate |
+| `lib/requests.js` | Account requests: storage, throttle, approve/dismiss |
+| `lib/password.js` | Generated operator passwords (wordlist + format) |
 | `lib/theme.js` | Theme schema, defaults (= the original design), validation |
 | `lib/env.js` | `.env` loader |
 | `views/control.html` | Operator page — text input, autocomplete, history |
@@ -311,6 +321,7 @@ Run `npm run smoke` to verify the isolation properties — it boots a real serve
 | `scripts/channel.js` | Channel admin CLI |
 | `scripts/smoke-test.js` | Isolation and auth checks |
 | `deploy/` | launchd service, Cloudflare Tunnel config, host setup |
+| `Dockerfile`, `docker-compose.yml` | Container build and local deployment |
 
 ## License
 

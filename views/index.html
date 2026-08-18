@@ -3,30 +3,464 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TextPresenter</title>
+  <title>TextPresenter — Live text overlays for churches</title>
   <link rel="stylesheet" href="/style.css" />
+  <style>
+    /* Landing page — shares the app's navy palette, laid out like a proper
+       product page. The admin panel is deliberately not linked from here. */
+    .landing-page {
+      background: linear-gradient(180deg, #131733 0%, #0f1220 420px);
+      color: #e8ecf4;
+    }
+
+    .landing-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 1.4rem 1.5rem;
+    }
+
+    .landing-brand {
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      color: #ffffff;
+    }
+
+    .landing-brand .brand-mark { color: #4da6ff; margin-right: 0.15rem; }
+
+    .landing-nav {
+      display: flex;
+      gap: 1.5rem;
+    }
+
+    .landing-nav a {
+      color: #9aa3b5;
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+
+    .landing-nav a:hover { color: #e8ecf4; }
+
+    /* ---- Hero ------------------------------------------------------------ */
+    .hero {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 4rem 1.5rem 3rem;
+      text-align: center;
+    }
+
+    .hero-eyebrow {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: #4da6ff;
+      margin-bottom: 1rem;
+    }
+
+    .hero h1 {
+      font-size: clamp(2rem, 5vw, 3.1rem);
+      line-height: 1.15;
+      color: #ffffff;
+      margin-bottom: 1.2rem;
+    }
+
+    .hero-sub {
+      max-width: 560px;
+      margin: 0 auto 2rem;
+      font-size: 1.05rem;
+      line-height: 1.6;
+      color: #9aa3b5;
+    }
+
+    .hero-actions {
+      display: flex;
+      justify-content: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      margin-bottom: 3rem;
+    }
+
+    .hero-btn {
+      display: inline-block;
+      padding: 0.8rem 1.6rem;
+      font-size: 1rem;
+      text-decoration: none;
+      border-radius: 10px;
+    }
+
+    /* A preview of the overlay itself, built with pure CSS. */
+    .hero-demo {
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    .demo-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      padding: 1rem 1.5rem;
+      background: rgba(15, 52, 96, 0.45);
+      border: 1px solid rgba(77, 166, 255, 0.35);
+      border-radius: 14px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    }
+
+    .demo-text {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #ffffff;
+    }
+
+    .demo-ref {
+      flex-shrink: 0;
+      padding: 0.2rem 0.7rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #c0d0f0;
+      background: rgba(77, 166, 255, 0.18);
+      border-radius: 20px;
+    }
+
+    .demo-caption {
+      margin-top: 0.9rem;
+      font-size: 0.85rem;
+      color: #77819b;
+    }
+
+    .demo-caption kbd {
+      padding: 0.1em 0.5em;
+      font-family: inherit;
+      font-size: 0.9em;
+      background: #0f3460;
+      border: 1px solid #1a508b;
+      border-radius: 4px;
+      color: #c0d0f0;
+    }
+
+    /* ---- Sections -------------------------------------------------------- */
+    .landing-section {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 3.5rem 1.5rem;
+      border-top: 1px solid #232846;
+    }
+
+    .landing-section h2 {
+      font-size: 1.7rem;
+      color: #ffffff;
+      margin-bottom: 0.6rem;
+      text-align: center;
+    }
+
+    .section-sub {
+      text-align: center;
+      color: #9aa3b5;
+      margin-bottom: 2.2rem;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.25rem;
+    }
+
+    .step {
+      background: #16213e;
+      border: 1px solid #232846;
+      border-radius: 14px;
+      padding: 1.6rem 1.4rem;
+    }
+
+    .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 2rem;
+      height: 2rem;
+      margin-bottom: 0.9rem;
+      border-radius: 50%;
+      background: rgba(77, 166, 255, 0.15);
+      border: 1px solid rgba(77, 166, 255, 0.4);
+      color: #4da6ff;
+      font-weight: 700;
+      font-size: 0.9rem;
+    }
+
+    .step h3 {
+      font-size: 1.05rem;
+      color: #ffffff;
+      margin-bottom: 0.5rem;
+    }
+
+    .step p {
+      font-size: 0.9rem;
+      line-height: 1.55;
+      color: #9aa3b5;
+    }
+
+    /* ---- Forms ----------------------------------------------------------- */
+    .request-form,
+    .login-form {
+      max-width: 480px;
+      margin: 0 auto;
+    }
+
+    .request-form label {
+      display: block;
+      margin: 1.1rem 0 0.35rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #c3c9d9;
+    }
+
+    .request-form label:first-child { margin-top: 0; }
+
+    .request-form .req { color: #4da6ff; }
+
+    .request-form .text-input {
+      font-size: 0.95rem;
+      padding: 0.7rem 0.9rem;
+    }
+
+    .request-form textarea.text-input { resize: vertical; }
+
+    .request-form .btn { margin-top: 1.4rem; width: 100%; }
+
+    .login-form {
+      display: flex;
+      gap: 0.6rem;
+    }
+
+    .login-form .text-input { font-size: 0.95rem; }
+
+    .login-form .btn { flex-shrink: 0; }
+
+    .section-note {
+      max-width: 480px;
+      margin: 1.2rem auto 0;
+      text-align: center;
+      font-size: 0.85rem;
+      color: #77819b;
+    }
+
+    .section-note code {
+      padding: 0.1em 0.4em;
+      background: #0f3460;
+      border: 1px solid #1a508b;
+      border-radius: 4px;
+      color: #c0d0f0;
+    }
+
+    .form-error {
+      margin-top: 1rem;
+      padding: 0.7rem 0.9rem;
+      font-size: 0.9rem;
+      color: #ff9d9d;
+      background: rgba(255, 90, 90, 0.08);
+      border: 1px solid rgba(255, 90, 90, 0.35);
+      border-radius: 8px;
+    }
+
+    .form-success {
+      margin-top: 1rem;
+      padding: 1rem 1.1rem;
+      font-size: 0.95rem;
+      line-height: 1.55;
+      color: #d6f5e6;
+      background: rgba(52, 211, 153, 0.08);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+      border-radius: 10px;
+    }
+
+    .form-success strong { color: #ffffff; }
+
+    /* Hidden from humans; bots fill it and the server discards the request. */
+    .hp {
+      position: absolute;
+      left: -9999px;
+      top: -9999px;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+    }
+
+    /* ---- Footer ---------------------------------------------------------- */
+    .landing-footer {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 3rem;
+      border-top: 1px solid #232846;
+      text-align: center;
+      font-size: 0.85rem;
+      color: #77819b;
+    }
+
+    /* ---- Mobile ---------------------------------------------------------- */
+    @media (max-width: 720px) {
+      .landing-nav { display: none; }
+      .hero { padding-top: 2.5rem; }
+      .steps { grid-template-columns: 1fr; }
+      .login-form { flex-direction: column; }
+      .demo-text { font-size: 1.05rem; }
+    }
+  </style>
   <!--TP_CONFIG-->
 </head>
-<body class="auth-page">
-  <div class="auth-card">
-    <h1>TextPresenter</h1>
-    <p class="auth-sub">
-      Live scripture and text overlays for OBS, projectors and second screens.
+<body class="landing-page">
+
+  <header class="landing-header">
+    <div class="landing-brand"><span class="brand-mark">◆</span>TextPresenter</div>
+    <nav class="landing-nav">
+      <a href="#how">How it works</a>
+      <a href="#request">Request access</a>
+      <a href="#login">Church login</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <p class="hero-eyebrow">Live text overlays for churches</p>
+    <h1>Put scripture on every screen.<br />The moment it's needed.</h1>
+    <p class="hero-sub">
+      Type a verse on the control page and it appears instantly on OBS,
+      projectors and second screens. Nothing to install, nothing to sync —
+      each church gets its own private channel.
     </p>
-    <p class="auth-hint">
-      Each church has its own private links. Open the control link your
-      administrator gave you — it looks like
-      <code>/c/your-church</code>.
-    </p>
-    <p class="auth-hint" id="adminLink" hidden>
-      <a href="/admin">Administrator sign in →</a>
-    </p>
-  </div>
+    <div class="hero-actions">
+      <a class="btn btn-primary hero-btn" href="#request">Request access</a>
+      <a class="btn btn-secondary hero-btn" href="#login">Church login →</a>
+    </div>
+    <div class="hero-demo" aria-hidden="true">
+      <div class="demo-bar">
+        <span class="demo-text">“For God so loved the world…”</span>
+        <span class="demo-ref">John 3:16</span>
+      </div>
+      <p class="demo-caption">What OBS shows when the operator types <kbd>John 3:16</kbd></p>
+    </div>
+  </section>
+
+  <section class="landing-section" id="how">
+    <h2>How it works</h2>
+    <p class="section-sub">Three steps between your church and live text on every screen.</p>
+    <div class="steps">
+      <div class="step">
+        <span class="step-num">1</span>
+        <h3>Request access</h3>
+        <p>Tell us who you are. We'll set up a private channel for your church and send you its code.</p>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <h3>Get your code</h3>
+        <p>Your code and password arrive by your preferred contact. Keep them with whoever runs the screens.</p>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <h3>Type, and it's live</h3>
+        <p>An operator types a verse on the control page; OBS and every projector show it instantly. One church never sees another's text.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="landing-section" id="request">
+    <h2>Request access</h2>
+    <p class="section-sub">We'll set up your church's private channel and be in touch with your code.</p>
+    <form id="requestForm" class="request-form">
+      <label for="reqName">Church name <span class="req">*</span></label>
+      <input id="reqName" class="text-input" maxlength="100" required placeholder="Christian Fellowship Church" />
+
+      <label for="reqContact">Your name</label>
+      <input id="reqContact" class="text-input" maxlength="100" placeholder="Jane Smith" />
+
+      <label for="reqEmail">Email</label>
+      <input id="reqEmail" class="text-input" type="email" maxlength="200" placeholder="jane@church.example" />
+
+      <label for="reqNotes">Anything we should know?</label>
+      <textarea id="reqNotes" class="text-input" rows="3" maxlength="1000" placeholder="How many screens, when you'd like to start…"></textarea>
+
+      <!-- Honeypot: humans never see this field; bots fill it and the server discards the submission. -->
+      <input type="text" id="reqWebsite" name="website" tabindex="-1" autocomplete="off" class="hp" />
+
+      <button type="submit" class="btn btn-primary">Send request</button>
+      <p class="form-error" id="requestError" hidden></p>
+      <div class="form-success" id="requestSuccess" hidden>
+        <strong>Request received.</strong> We'll set up your church's channel and
+        be in touch with your code and password — usually within a day or two.
+      </div>
+    </form>
+  </section>
+
+  <section class="landing-section" id="login">
+    <h2>Church login</h2>
+    <p class="section-sub">Already have a code? Enter it to reach your church's sign-in page.</p>
+    <form id="loginForm" class="login-form">
+      <input id="loginCode" class="text-input" required
+             pattern="[a-z0-9][a-z0-9-]{0,38}[a-z0-9]"
+             placeholder="your-church-code" />
+      <button type="submit" class="btn btn-primary">Go to login</button>
+    </form>
+    <p class="form-error" id="loginError" hidden>That doesn't look like a code — lowercase letters, numbers and hyphens only.</p>
+    <p class="section-note">Your code is the part of the link that looks like <code>/c/your-church</code>.</p>
+  </section>
+
+  <footer class="landing-footer">
+    <p>TextPresenter — live scripture and text overlays for churches.</p>
+  </footer>
 
   <script>
     (function () {
-      var config = window.__TP__ || {};
-      if (config.hasAdmin) document.getElementById("adminLink").hidden = false;
+      // ---- Request form -----------------------------------------------------
+      var requestForm = document.getElementById("requestForm");
+      var requestError = document.getElementById("requestError");
+      var requestSuccess = document.getElementById("requestSuccess");
+
+      requestForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+        requestError.hidden = true;
+        fetch("/api/request", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            churchName: document.getElementById("reqName").value,
+            contactName: document.getElementById("reqContact").value,
+            email: document.getElementById("reqEmail").value,
+            notes: document.getElementById("reqNotes").value,
+            website: document.getElementById("reqWebsite").value,
+          }),
+        })
+          .then(function (res) {
+            if (!res.ok) {
+              return res.json().then(function (data) {
+                throw new Error(data.error || "Request failed — please try again.");
+              });
+            }
+            requestForm.hidden = true;
+            requestSuccess.hidden = false;
+          })
+          .catch(function (err) {
+            requestError.textContent = err.message;
+            requestError.hidden = false;
+          });
+      });
+
+      // ---- Church login -----------------------------------------------------
+      var loginForm = document.getElementById("loginForm");
+      var loginError = document.getElementById("loginError");
+
+      loginForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+        var code = document.getElementById("loginCode").value.trim().toLowerCase();
+        if (!/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(code)) {
+          loginError.hidden = false;
+          return;
+        }
+        location.href = "/c/" + encodeURIComponent(code);
+      });
     })();
   </script>
 </body>

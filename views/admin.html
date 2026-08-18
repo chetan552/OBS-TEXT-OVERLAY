@@ -38,7 +38,7 @@
       <form id="createForm" class="admin-form">
         <div class="admin-field">
           <label for="newName">Church name</label>
-          <input type="text" id="newName" class="text-input" placeholder="Grace Fellowship" required />
+          <input type="text" id="newName" class="text-input" placeholder="Christian Fellowship Church" required />
         </div>
         <div class="admin-field">
           <label for="newId">Channel id</label>
@@ -46,7 +46,7 @@
             type="text"
             id="newId"
             class="text-input"
-            placeholder="grace-fellowship"
+            placeholder="christian-fellowship-church"
             pattern="[a-z0-9][a-z0-9-]{0,38}[a-z0-9]"
             required
           />
@@ -63,6 +63,15 @@
         <button type="submit" class="btn btn-primary">Create channel</button>
         <p class="admin-error" id="createError" hidden></p>
       </form>
+    </section>
+
+    <!-- ---- Account requests ------------------------------------------- -->
+    <section class="admin-card">
+      <h2>Account requests</h2>
+      <p class="admin-help">Submitted on the home page. Approving creates their channel and shows a one-time password to relay.</p>
+      <p class="admin-empty" id="requestsEmpty" hidden>No requests yet.</p>
+      <div id="requestList" class="request-list"></div>
+      <div class="approve-result" id="approveResult" hidden></div>
     </section>
 
     <!-- ---- Existing channels ------------------------------------------ -->
@@ -214,6 +223,128 @@
         });
       }
 
+      // ---- Account requests ------------------------------------------------
+      var requestListEl = document.getElementById("requestList");
+      var requestsEmptyEl = document.getElementById("requestsEmpty");
+      var approveResultEl = document.getElementById("approveResult");
+
+      function renderRequest(request) {
+        var card = document.createElement("article");
+        card.className = "request-card" + (request.status !== "pending" ? " is-resolved" : "");
+
+        var head = document.createElement("div");
+        head.className = "request-head";
+
+        var title = document.createElement("h3");
+        title.textContent = request.churchName;
+
+        var meta = document.createElement("span");
+        meta.className = "request-meta";
+        var resolved =
+          request.status === "approved"
+            ? "approved → " + request.channelId
+            : request.status === "dismissed"
+              ? "dismissed"
+              : "";
+        meta.textContent =
+          (resolved ? resolved + " · " : "") + new Date(request.createdAt).toLocaleDateString();
+
+        head.appendChild(title);
+        head.appendChild(meta);
+        card.appendChild(head);
+
+        var contact = document.createElement("p");
+        contact.className = "request-detail";
+        var who = [request.contactName, request.email].filter(Boolean).join(" · ");
+        contact.textContent = who || "No contact details";
+        card.appendChild(contact);
+
+        if (request.notes) {
+          var notes = document.createElement("p");
+          notes.className = "request-notes";
+          notes.textContent = request.notes;
+          card.appendChild(notes);
+        }
+
+        if (request.status === "pending") {
+          var actions = document.createElement("div");
+          actions.className = "request-actions";
+
+          actions.appendChild(actionButton("Approve", "btn-primary", function () {
+            if (!confirm("Approve " + request.churchName + "?\n\nThis creates their channel right now.")) return;
+            api("POST", "/admin/api/requests/" + request.id + "/approve")
+              .then(function (data) {
+                showApproveResult(data);
+                loadRequests();
+                load();
+              })
+              .catch(function (err) { alert(err.message); });
+          }));
+
+          actions.appendChild(actionButton("Dismiss", "btn-secondary", function () {
+            if (!confirm("Dismiss the request from " + request.churchName + "?")) return;
+            api("POST", "/admin/api/requests/" + request.id + "/dismiss").then(loadRequests);
+          }));
+
+          card.appendChild(actions);
+        }
+
+        return card;
+      }
+
+      function showApproveResult(data) {
+        approveResultEl.textContent = "";
+        approveResultEl.hidden = false;
+
+        var title = document.createElement("h3");
+        title.textContent = "Channel created for " + data.channel.name;
+
+        var intro = document.createElement("p");
+        intro.textContent =
+          "Send this password to the church along with the code " + data.channel.id +
+          ". It won't be shown again — you can always set a new one with Reset password.";
+
+        var row = document.createElement("div");
+        row.className = "password-row";
+
+        var pw = document.createElement("code");
+        pw.textContent = data.password;
+
+        var copy = document.createElement("button");
+        copy.className = "btn btn-secondary btn-small";
+        copy.type = "button";
+        copy.textContent = "Copy";
+        copy.addEventListener("click", function () {
+          navigator.clipboard.writeText(data.password).then(function () {
+            copy.textContent = "Copied";
+            setTimeout(function () { copy.textContent = "Copy"; }, 1200);
+          });
+        });
+
+        row.appendChild(pw);
+        row.appendChild(copy);
+        approveResultEl.appendChild(title);
+        approveResultEl.appendChild(intro);
+        approveResultEl.appendChild(row);
+      }
+
+      function loadRequests() {
+        return api("GET", "/admin/api/requests").then(function (data) {
+          requestListEl.textContent = "";
+          requestsEmptyEl.hidden = data.requests.length > 0;
+          var pending = data.requests.filter(function (r) { return r.status === "pending"; });
+          var resolved = data.requests.filter(function (r) { return r.status !== "pending"; });
+          pending.forEach(function (r) { requestListEl.appendChild(renderRequest(r)); });
+          if (resolved.length) {
+            var label = document.createElement("p");
+            label.className = "request-group-label";
+            label.textContent = "Resolved";
+            requestListEl.appendChild(label);
+            resolved.forEach(function (r) { requestListEl.appendChild(renderRequest(r)); });
+          }
+        });
+      }
+
       // ---- Create form ----------------------------------------------------
       var nameEl = document.getElementById("newName");
       var idEl = document.getElementById("newId");
@@ -235,11 +366,26 @@
 
       document.getElementById("generatePassword").addEventListener("click", function () {
         // Readable words beat random characters here: someone reads this
-        // aloud to a volunteer over the phone.
-        var words = ["anchor", "beacon", "cedar", "harbor", "lantern", "meadow",
-                     "quartz", "ridge", "summit", "willow", "amber", "cobalt"];
+        // aloud to a volunteer over the phone. Keep this list in sync with
+        // the one in lib/password.js.
+        var words = [
+          "anchor", "beacon", "cedar", "harbor", "lantern", "meadow",
+          "quartz", "ridge", "summit", "willow", "amber", "cobalt",
+          "arbor", "autumn", "basket", "boulder", "breeze", "candle",
+          "canyon", "comet", "cottage", "daisy", "dove", "ember",
+          "falcon", "fern", "firefly", "flint", "forest", "frost",
+          "garden", "garnet", "glacier", "grove", "harvest", "hazel",
+          "heron", "hollow", "horizon", "ivy", "juniper", "kestrel",
+          "lake", "lily", "loam", "maple", "marsh", "mist",
+          "moon", "moss", "oak", "ocean", "olive", "orchard",
+          "otter", "pebble", "pine", "pond", "prairie", "robin",
+          "rose", "sparrow", "spring", "stone", "storm", "stream",
+          "sunset", "thistle", "thunder", "timber", "trail", "tulip",
+          "valley", "vine", "walnut", "wren"
+        ];
         var pick = function () { return words[Math.floor(Math.random() * words.length)]; };
-        passwordEl.value = pick() + "-" + pick() + "-" + Math.floor(100 + Math.random() * 900);
+        passwordEl.value = pick() + "-" + pick() + "-" + pick() + "-" + pick() +
+          "-" + Math.floor(100 + Math.random() * 900);
       });
 
       document.getElementById("createForm").addEventListener("submit", function (event) {
@@ -265,6 +411,7 @@
 
       // Refresh periodically so connection counts stay roughly live.
       load();
+      loadRequests();
       setInterval(load, 15000);
     })();
   </script>

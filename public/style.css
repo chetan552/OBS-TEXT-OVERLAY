@@ -609,6 +609,111 @@ a.btn {
   }
 }
 
+/* ---- Account requests ---------------------------------------------------- */
+.request-card {
+  padding: 1.25rem;
+  background: #0f1b33;
+  border: 1px solid #253a5e;
+  border-radius: 10px;
+}
+
+.request-card + .request-card { margin-top: 1rem; }
+
+.request-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.request-head h3 {
+  font-size: 1.05rem;
+  color: #ffffff;
+}
+
+.request-meta {
+  font-size: 0.75rem;
+  color: #77819b;
+  white-space: nowrap;
+}
+
+.request-detail {
+  font-size: 0.85rem;
+  color: #a0a0b8;
+  line-height: 1.5;
+}
+
+.request-notes {
+  margin-top: 0.8rem;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: #c0c8dc;
+  background: #16213e;
+  border-left: 3px solid #2a3f66;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  /* Long notes shouldn't stretch a card across the whole panel. */
+  max-height: 9rem;
+  overflow-y: auto;
+}
+
+.request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.request-card.is-resolved { opacity: 0.6; }
+
+.request-group-label {
+  margin: 1.1rem 0 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8888a0;
+}
+
+.approve-result {
+  margin-top: 1rem;
+  padding: 1rem 1.1rem;
+  background: #12381f;
+  border: 1px solid #2f7d4c;
+  border-radius: 10px;
+}
+
+.approve-result h3 {
+  font-size: 0.95rem;
+  color: #ffffff;
+  margin-bottom: 0.5rem;
+}
+
+.approve-result p {
+  font-size: 0.85rem;
+  color: #b8e6c8;
+  line-height: 1.5;
+}
+
+.approve-result .password-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.7rem;
+}
+
+.approve-result code {
+  padding: 0.4rem 0.7rem;
+  font-size: 1rem;
+  background: #0f1b33;
+  border: 1px solid #2f7d4c;
+  border-radius: 6px;
+  color: #ffffff;
+}
+
 /* ===========================================================================
    OVERLAY PAGE
    ===========================================================================

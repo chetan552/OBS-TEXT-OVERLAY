@@ -304,6 +304,71 @@ async function run() {
   const health = await (await fetch(`${BASE}/healthz`)).json();
   check("a channel added by the CLI reaches the running server", health.channels === 3);
 
+  // ---- 8. Account requests -------------------------------------------------
+  const requestRes = await fetch(`${BASE}/api/request`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      churchName: "New Hope Church",
+      contactName: "Sam Pastor",
+      email: "sam@example.org",
+      notes: "Two screens, starting Sunday",
+    }),
+  });
+  check("the public request form accepts a submission", requestRes.status === 201);
+
+  const spamRes = await fetch(`${BASE}/api/request`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ churchName: "Spam Bot", website: "http://spam.example" }),
+  });
+  check("a honeypot submission is accepted but discarded", spamRes.status === 200);
+
+  const adminLoginRes = await fetch(`${BASE}/admin/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ password: ADMIN_PASSWORD }),
+    redirect: "manual",
+  });
+  const adminCookie = (adminLoginRes.headers.get("set-cookie") || "").split(";")[0];
+  check("admin login returns a session cookie", adminCookie.startsWith("tp_admin="));
+
+  const denied = await fetch(`${BASE}/admin/api/requests`, { headers: { Cookie: hopeCookie } });
+  check("requests are not visible to channel operators", denied.status === 401);
+
+  const requestsRes = await fetch(`${BASE}/admin/api/requests`, {
+    headers: { Cookie: adminCookie },
+  });
+  const requestsData = await requestsRes.json();
+  check("exactly the real submission reached the admin", requestsData.requests.length === 1);
+  check(
+    "a stored request never carries a password or token",
+    !("password" in requestsData.requests[0]) && !("viewToken" in requestsData.requests[0])
+  );
+
+  const approveRes = await fetch(
+    `${BASE}/admin/api/requests/${requestsData.requests[0].id}/approve`,
+    { method: "POST", headers: { Cookie: adminCookie } }
+  );
+  const approved = await approveRes.json();
+  check(
+    "approving a request creates the channel from the church name",
+    approved.channel && approved.channel.id === "new-hope-church"
+  );
+  check(
+    "approve returns a generated password exactly once",
+    typeof approved.password === "string" && approved.password.length >= 8
+  );
+
+  const newChurchCookie = await login("new-hope-church", approved.password);
+  check("the generated password signs the church in", newChurchCookie.startsWith("tp_c_new_hope_church="));
+
+  const again = await fetch(
+    `${BASE}/admin/api/requests/${requestsData.requests[0].id}/approve`,
+    { method: "POST", headers: { Cookie: adminCookie } }
+  );
+  check("an already-resolved request cannot be approved twice", again.status === 400);
+
   for (const entry of [graceControl, graceView, hopeView]) entry.socket.close();
 }
 

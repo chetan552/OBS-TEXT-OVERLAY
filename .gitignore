@@ -33,4 +33,4 @@ Thumbs.db
 .settings/
 
 # Node
-package-lock.json
+#package-lock.json
