@@ -173,7 +173,7 @@ app.use(
 
 /** Cookies must be Secure in public (HTTPS) use but not over plain-http LAN. */
 function isSecureRequest(req) {
-  return req.secure || req.get("x-forwarded-proto") === "https";
+  return req.protocol === "https";
 }
 
 function controlCookieName(channelId) {
@@ -603,8 +603,12 @@ function withChannel(req, res, fn) {
   try {
     fn();
   } catch (err) {
-    const status = /No such channel/.test(err.message) ? 404 : 400;
-    res.status(status).json({ error: err.message });
+    if (/No such channel/.test(err.message)) {
+      res.status(404).json({ error: err.message });
+    } else {
+      console.error(`[admin] withChannel failed: ${err.stack || err.message}`);
+      res.status(400).json({ error: "Channel update failed" });
+    }
   }
 }
 
@@ -624,11 +628,20 @@ function decorate(req, channel) {
  * Build an absolute URL for the church to copy. PUBLIC_URL wins when set,
  * which matters behind a tunnel: the request Host may be an internal name
  * while the church needs the public hostname.
+ *
+ * When PUBLIC_URL is unset we only trust loopback/LAN hosts — anything else
+ * is almost certainly a spoofed Host header, and we'd rather hand the admin
+ * a relative URL than a link to an attacker's host.
  */
 function absoluteUrl(req, pathname) {
   if (PUBLIC_URL) return `${PUBLIC_URL}${pathname}`;
-  const proto = isSecureRequest(req) ? "https" : "http";
-  return `${proto}://${req.get("host")}${pathname}`;
+  const host = req.get("host") || "";
+  const hostname = host.split(":", 1)[0];
+  if (hostname && isPrivateHostname(hostname)) {
+    const proto = isSecureRequest(req) ? "https" : "http";
+    return `${proto}://${host}${pathname}`;
+  }
+  return pathname;
 }
 
 function clientIp(req) {
@@ -710,13 +723,7 @@ function disconnectViewers(channelId) {
 
 // ---- Origin policy ----------------------------------------------------------
 
-function isPrivateOrigin(origin) {
-  let host;
-  try {
-    host = new URL(origin).hostname;
-  } catch {
-    return false;
-  }
+function isPrivateHostname(host) {
   if (host === "localhost" || host === "127.0.0.1" || host === "::1") return true;
   if (host.endsWith(".local")) return true;
   // RFC 1918 ranges — the LAN case.
@@ -724,6 +731,16 @@ function isPrivateOrigin(origin) {
   if (/^192\.168\./.test(host)) return true;
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
   return false;
+}
+
+function isPrivateOrigin(origin) {
+  let host;
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    return false;
+  }
+  return isPrivateHostname(host);
 }
 
 function isOriginAllowed(origin) {

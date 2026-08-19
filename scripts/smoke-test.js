@@ -31,7 +31,7 @@ const env = {
   HOST: "127.0.0.1",
   DATA_DIR,
   ADMIN_PASSWORD,
-  SESSION_SECRET: "smoke-test-secret",
+  SESSION_SECRET: "smoke-test-session-secret-must-be-at-least-32-chars",
 };
 
 let failures = 0;

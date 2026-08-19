@@ -390,9 +390,12 @@
           "sunset", "thistle", "thunder", "timber", "trail", "tulip",
           "valley", "vine", "walnut", "wren"
         ];
-        var pick = function () { return words[Math.floor(Math.random() * words.length)]; };
+        var randomInt = function (max) {
+          return crypto.getRandomValues(new Uint32Array(1))[0] % max;
+        };
+        var pick = function () { return words[randomInt(words.length)]; };
         passwordEl.value = pick() + "-" + pick() + "-" + pick() + "-" + pick() +
-          "-" + Math.floor(100 + Math.random() * 900);
+          "-" + (100 + randomInt(900));
       });
 
       document.getElementById("createForm").addEventListener("submit", function (event) {
