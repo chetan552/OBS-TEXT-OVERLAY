@@ -589,6 +589,16 @@ app.post("/admin/api/requests/:id/dismiss", requireAdmin, (req, res) => {
   }
 });
 
+app.delete("/admin/api/requests/:id", requireAdmin, (req, res) => {
+  try {
+    const request = requests.remove(req.params.id);
+    console.log(`[admin] Deleted request from "${request.churchName}"`);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 function withChannel(req, res, fn) {
   try {
     fn();

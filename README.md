@@ -306,7 +306,7 @@ Run `npm run smoke` to verify the isolation properties — it boots a real serve
 | `lib/store.js` | Channel persistence (`channels.json`) |
 | `lib/auth.js` | scrypt hashing, signed session cookies |
 | `lib/login-guard.js` | Failed-login lockout, scrypt concurrency gate |
-| `lib/requests.js` | Account requests: storage, throttle, approve/dismiss |
+| `lib/requests.js` | Account requests: storage, throttle, approve/dismiss/delete |
 | `lib/password.js` | Generated operator passwords (wordlist + format) |
 | `lib/theme.js` | Theme schema, defaults (= the original design), validation |
 | `lib/env.js` | `.env` loader |

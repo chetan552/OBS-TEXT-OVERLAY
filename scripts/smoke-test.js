@@ -369,6 +369,23 @@ async function run() {
   );
   check("an already-resolved request cannot be approved twice", again.status === 400);
 
+  const deleteRes = await fetch(
+    `${BASE}/admin/api/requests/${requestsData.requests[0].id}`,
+    { method: "DELETE", headers: { Cookie: adminCookie } }
+  );
+  check("a resolved request can be deleted", deleteRes.status === 200);
+
+  const afterDelete = await (
+    await fetch(`${BASE}/admin/api/requests`, { headers: { Cookie: adminCookie } })
+  ).json();
+  check("the deleted request is gone from the list", afterDelete.requests.length === 0);
+
+  const deleteAgain = await fetch(
+    `${BASE}/admin/api/requests/${requestsData.requests[0].id}`,
+    { method: "DELETE", headers: { Cookie: adminCookie } }
+  );
+  check("deleting a missing request fails", deleteAgain.status === 400);
+
   for (const entry of [graceControl, graceView, hopeView]) entry.socket.close();
 }
 

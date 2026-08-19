@@ -266,10 +266,10 @@
           card.appendChild(notes);
         }
 
-        if (request.status === "pending") {
-          var actions = document.createElement("div");
-          actions.className = "request-actions";
+        var actions = document.createElement("div");
+        actions.className = "request-actions";
 
+        if (request.status === "pending") {
           actions.appendChild(actionButton("Approve", "btn-primary", function () {
             if (!confirm("Approve " + request.churchName + "?\n\nThis creates their channel right now.")) return;
             api("POST", "/admin/api/requests/" + request.id + "/approve")
@@ -285,10 +285,17 @@
             if (!confirm("Dismiss the request from " + request.churchName + "?")) return;
             api("POST", "/admin/api/requests/" + request.id + "/dismiss").then(loadRequests);
           }));
-
-          card.appendChild(actions);
         }
 
+        actions.appendChild(actionButton("Delete", "btn-danger", function () {
+          if (!confirm(
+            "Delete the request from " + request.churchName + "?\n\n" +
+            "This removes it permanently — dismiss it instead if you want to keep a record."
+          )) return;
+          api("DELETE", "/admin/api/requests/" + request.id).then(loadRequests);
+        }));
+
+        card.appendChild(actions);
         return card;
       }
 
